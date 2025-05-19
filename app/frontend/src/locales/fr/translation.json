@@ -1,6 +1,6 @@
 {
-    "pageTitle": "Azure OpenAI + AI Search",
-    "headerTitle": "Azure OpenAI + AI Search",
+    "pageTitle": "Qualrisk AI",
+    "headerTitle": "Qualrisk AI",
     "chat": "Chat",
     "qa": "Posez une question",
     "login": "Connexion",
@@ -11,7 +11,7 @@
         "openChatHistory": "Ouvrir l'historique du chat",
         "noHistory": "Pas d'historique dans ce chat",
         "deleteModalTitle": "Supprimer l'historique du chat",
-        "deleteModalDescription": "Cette action est irréversible. Supprimer l'historique de ce chat ?",
+        "deleteModalDescription": "Cette action est irréversible. Supprimer l'historique de ce chat ?",
         "deleteLabel": "Supprimer",
         "cancelLabel": "Annuler",
         "today": "Aujourd'hui",

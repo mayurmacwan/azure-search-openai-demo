@@ -14,9 +14,7 @@ export const ClearChatButton = ({ className, disabled, onClick }: Props) => {
     const { t, i18n } = useTranslation();
     return (
         <div className={`${styles.container} ${className ?? ""}`}>
-            <Button icon={<Delete24Regular />} disabled={disabled} onClick={onClick}>
-                {t("clearChat")}
-            </Button>
+            <Button icon={<Delete24Regular />} disabled={disabled} onClick={onClick} title={t("clearChat")} />
         </div>
     );
 };

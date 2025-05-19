@@ -104,6 +104,8 @@ const Chat = () => {
         setIsPlaying
     };
 
+    const [isPanelOpen, setIsPanelOpen] = useState<boolean>(false);
+
     const getConfig = async () => {
         configApi().then(config => {
             setShowGPT4VOptions(config.showGPT4VOptions);
@@ -366,9 +368,11 @@ const Chat = () => {
     const onShowCitation = (citation: string, index: number) => {
         if (activeCitation === citation && activeAnalysisPanelTab === AnalysisPanelTabs.CitationTab && selectedAnswer === index) {
             setActiveAnalysisPanelTab(undefined);
+            setIsPanelOpen(false);
         } else {
             setActiveCitation(citation);
             setActiveAnalysisPanelTab(AnalysisPanelTabs.CitationTab);
+            setIsPanelOpen(true);
         }
 
         setSelectedAnswer(index);
@@ -377,8 +381,10 @@ const Chat = () => {
     const onToggleTab = (tab: AnalysisPanelTabs, index: number) => {
         if (activeAnalysisPanelTab === tab && selectedAnswer === index) {
             setActiveAnalysisPanelTab(undefined);
+            setIsPanelOpen(false);
         } else {
             setActiveAnalysisPanelTab(tab);
+            setIsPanelOpen(true);
         }
 
         setSelectedAnswer(index);
@@ -388,33 +394,19 @@ const Chat = () => {
 
     return (
         <div className={styles.container}>
-            {/* Setting the page title using react-helmet-async */}
             <Helmet>
                 <title>{t("pageTitle")}</title>
             </Helmet>
-            <div className={styles.commandsSplitContainer}>
-                <div className={styles.commandsContainer}>
-                    {((useLogin && showChatHistoryCosmos) || showChatHistoryBrowser) && (
-                        <HistoryButton className={styles.commandButton} onClick={() => setIsHistoryPanelOpen(!isHistoryPanelOpen)} />
-                    )}
-                </div>
-                <div className={styles.commandsContainer}>
-                    <ClearChatButton className={styles.commandButton} onClick={clearChat} disabled={!lastQuestionRef.current || isLoading} />
-                    {showUserUpload && <UploadFile className={styles.commandButton} disabled={!loggedIn} />}
-                    <SettingsButton className={styles.commandButton} onClick={() => setIsConfigPanelOpen(!isConfigPanelOpen)} />
-                </div>
-            </div>
-            <div className={styles.chatRoot} style={{ marginLeft: isHistoryPanelOpen ? "300px" : "0" }}>
-                <div className={styles.chatContainer}>
+
+            <div className={styles.chatRoot}>
+                <div className={styles.chatContainer} style={isPanelOpen ? { width: "calc(100% - 350px)" } : {}}>
                     {!lastQuestionRef.current ? (
                         <div className={styles.chatEmptyState}>
-                            <img src={appLogo} alt="App logo" width="120" height="120" />
-
-                            <h1 className={styles.chatEmptyStateTitle}>{t("chatEmptyStateTitle")}</h1>
-                            <h2 className={styles.chatEmptyStateSubtitle}>{t("chatEmptyStateSubtitle")}</h2>
-                            {showLanguagePicker && <LanguagePicker onLanguageChange={newLang => i18n.changeLanguage(newLang)} />}
-
-                            <ExampleList onExampleClicked={onExampleClicked} useGPT4V={useGPT4V} />
+                            <div className={styles.avatar}>QR</div>
+                            <h1 className={styles.chatEmptyStateTitle}>QualRisk AI Assistant</h1>
+                            <p className={styles.chatEmptyStateSubtitle}>
+                                Ask me anything about your documents or how I can assist you with your enterprise needs.
+                            </p>
                         </div>
                     ) : (
                         <div className={styles.chatMessageStream}>
@@ -487,7 +479,7 @@ const Chat = () => {
                     <div className={styles.chatInput}>
                         <QuestionInput
                             clearOnSend
-                            placeholder={t("defaultExamples.placeholder")}
+                            placeholder="Message QualRisk Assistant..."
                             disabled={isLoading}
                             onSend={question => makeApiRequest(question)}
                             showSpeechInput={showSpeechInput}

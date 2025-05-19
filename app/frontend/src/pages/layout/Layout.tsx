@@ -4,18 +4,14 @@ import { useTranslation } from "react-i18next";
 import styles from "./Layout.module.css";
 
 import { useLogin } from "../../authConfig";
-
 import { LoginButton } from "../../components/LoginButton";
 import { IconButton } from "@fluentui/react";
+import { Chat24Regular, DocumentFolder24Regular, Settings24Regular, AddSquare24Regular } from "@fluentui/react-icons";
 
 const Layout = () => {
     const { t } = useTranslation();
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef: RefObject<HTMLDivElement> = useRef(null);
-
-    const toggleMenu = () => {
-        setMenuOpen(!menuOpen);
-    };
 
     const handleClickOutside = (event: MouseEvent) => {
         if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -36,46 +32,53 @@ const Layout = () => {
 
     return (
         <div className={styles.layout}>
+            {/* Original header - now hidden via CSS */}
             <header className={styles.header} role={"banner"}>
                 <div className={styles.headerContainer} ref={menuRef}>
                     <Link to="/" className={styles.headerTitleContainer}>
                         <h3 className={styles.headerTitle}>{t("headerTitle")}</h3>
                     </Link>
-                    <nav>
-                        <ul className={`${styles.headerNavList} ${menuOpen ? styles.show : ""}`}>
-                            <li>
-                                <NavLink
-                                    to="/"
-                                    className={({ isActive }) => (isActive ? styles.headerNavPageLinkActive : styles.headerNavPageLink)}
-                                    onClick={() => setMenuOpen(false)}
-                                >
-                                    {t("chat")}
-                                </NavLink>
-                            </li>
-                            <li>
-                                <NavLink
-                                    to="/qa"
-                                    className={({ isActive }) => (isActive ? styles.headerNavPageLinkActive : styles.headerNavPageLink)}
-                                    onClick={() => setMenuOpen(false)}
-                                >
-                                    {t("qa")}
-                                </NavLink>
-                            </li>
-                        </ul>
-                    </nav>
-                    <div className={styles.loginMenuContainer}>
-                        {useLogin && <LoginButton />}
-                        <IconButton
-                            iconProps={{ iconName: "GlobalNavButton" }}
-                            className={styles.menuToggle}
-                            onClick={toggleMenu}
-                            ariaLabel={t("labels.toggleMenu")}
-                        />
-                    </div>
+                    <div className={styles.loginMenuContainer}>{useLogin && <LoginButton />}</div>
                 </div>
             </header>
 
-            <Outlet />
+            {/* New layout with sidebar */}
+            <div className={styles.mainContainer}>
+                <div className={styles.sidebar}>
+                    <div className={styles.sidebarHeader}>
+                        <div className={styles.sidebarLogo}>QR</div>
+                        <div className={styles.sidebarTitle}>{t("headerTitle")}</div>
+                    </div>
+
+                    <button className={styles.newChatButton}>
+                        <AddSquare24Regular className={styles.newChatIcon} />
+                        New Chat
+                    </button>
+
+                    <div className={styles.recentChatsHeader}>RECENT CHATS</div>
+                    <ul className={styles.chatList}>
+                        <li className={styles.chatItem}>
+                            <Chat24Regular className={styles.chatItemIcon} />
+                            <span className={styles.chatItemText}>New Conversation</span>
+                        </li>
+                    </ul>
+
+                    <div className={styles.sidebarFooter}>
+                        <div className={styles.footerItem}>
+                            <DocumentFolder24Regular className={styles.footerItemIcon} />
+                            <span className={styles.footerItemText}>My Documents</span>
+                        </div>
+                        <div className={styles.footerItem}>
+                            <Settings24Regular className={styles.footerItemIcon} />
+                            <span className={styles.footerItemText}>Settings</span>
+                        </div>
+                    </div>
+                </div>
+
+                <div className={styles.content}>
+                    <Outlet />
+                </div>
+            </div>
         </div>
     );
 };
