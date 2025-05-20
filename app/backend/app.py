@@ -368,7 +368,8 @@ async def upload(auth_claims: dict[str, Any]):
         # If no files were included in the request, return an error response
         return jsonify({"message": "No file part in the request", "status": "failed"}), 400
 
-    user_oid = auth_claims["oid"]
+    # Use a default user ID for unauthenticated uploads
+    user_oid = auth_claims.get("oid", "public-user")
     file = request_files.getlist("file")[0]
     user_blob_container_client: FileSystemClient = current_app.config[CONFIG_USER_BLOB_CONTAINER_CLIENT]
     user_directory_client = user_blob_container_client.get_directory_client(user_oid)
@@ -383,10 +384,26 @@ async def upload(auth_claims: dict[str, Any]):
     file_io.name = file.filename
     file_io = io.BufferedReader(file_io)
     await file_client.upload_data(file_io, overwrite=True, metadata={"UploadedBy": user_oid})
+    
+    # Save file to the data directory for prepdocs.sh processing
+    temp_file_path = os.path.join("data", file.filename)
+    file_io.seek(0)
+    with open(temp_file_path, "wb") as f:
+        f.write(file_io.read())
+    
+    # Run prepdocs.sh as a background process
+    import subprocess
+    if os.name == 'nt':  # Windows
+        subprocess.Popen(["powershell", "-File", "scripts/prepdocs.ps1"], shell=True)
+    else:  # Linux/Mac
+        subprocess.Popen(["bash", "scripts/prepdocs.sh"], shell=True)
+        
+    # Also use the standard strategy to handle the file with user ACLs
     file_io.seek(0)
     ingester: UploadUserFileStrategy = current_app.config[CONFIG_INGESTER]
     await ingester.add_file(File(content=file_io, acls={"oids": [user_oid]}, url=file_client.url))
-    return jsonify({"message": "File uploaded successfully"}), 200
+    
+    return jsonify({"message": "File uploaded successfully and queued for processing"}), 200
 
 
 @bp.post("/delete_uploaded")
@@ -418,6 +435,191 @@ async def list_uploaded(auth_claims: dict[str, Any]):
         if error.status_code != 404:
             current_app.logger.exception("Error listing uploaded files", error)
     return jsonify(files), 200
+
+
+@bp.post("/run_prepdocs")
+@authenticated
+async def run_prepdocs(auth_claims: dict[str, Any]):
+    # Optional: Check if the user has admin privileges
+    # For example, by checking if they're in a specific admin group
+    # if "admin_group_id" not in auth_claims.get("groups", []):
+    #     return jsonify({"message": "Unauthorized. Admin privileges required."}), 403
+    
+    try:
+        import subprocess
+        import os
+        
+        # Run prepdocs.sh as a background process
+        if os.name == 'nt':  # Windows
+            process = subprocess.Popen(["powershell", "-File", "scripts/prepdocs.ps1"], 
+                                      stdout=subprocess.PIPE, 
+                                      stderr=subprocess.PIPE,
+                                      shell=True)
+        else:  # Linux/Mac
+            process = subprocess.Popen(["bash", "scripts/prepdocs.sh"], 
+                                      stdout=subprocess.PIPE, 
+                                      stderr=subprocess.PIPE,
+                                      shell=True)
+        
+        # For a real app, you might want to capture the process ID and status
+        # and provide a way to check on the status later
+        return jsonify({
+            "message": "Document processing started", 
+            "process_id": process.pid
+        }), 200
+    except Exception as e:
+        current_app.logger.exception("Error running prepdocs script")
+        return jsonify({"message": f"Error running document processing: {str(e)}"}), 500
+
+
+@bp.post("/upload_no_auth")
+async def upload_no_auth():
+    """Upload endpoint that doesn't require authentication and bypasses the user upload system"""
+    try:
+        request_files = await request.files
+        if "file" not in request_files:
+            # If no files were included in the request, return an error response
+            return jsonify({"message": "No file part in the request", "status": "failed"}), 400
+
+        file = request_files.getlist("file")[0]
+        
+        # Check file size (limit to 10MB)
+        file_content = file.read()
+        file_size = len(file_content)
+        if file_size > 10 * 1024 * 1024:  # 10MB in bytes
+            return jsonify({"message": "File size exceeds 10MB limit", "status": "failed"}), 413
+        
+        # Reset file pointer
+        file.seek(0)
+        
+        # Get absolute paths for better reliability
+        import os, sys, subprocess
+        from pathlib import Path
+        
+        # Get the project root directory (2 levels up from the current file)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        root_dir = os.path.dirname(os.path.dirname(current_dir))
+        data_dir = os.path.join(root_dir, "data")
+        
+        # Make sure directory exists
+        os.makedirs(data_dir, exist_ok=True)
+        
+        current_app.logger.info(f"Root directory: {root_dir}")
+        current_app.logger.info(f"Data directory: {data_dir}")
+        
+        # Save the file to the data directory
+        file_path = os.path.join(data_dir, file.filename)
+        current_app.logger.info(f"Saving file to: {file_path}")
+        
+        with open(file_path, "wb") as f:
+            f.write(file_content)
+        
+        current_app.logger.info(f"File saved: {file_path}")
+        
+        # Also save to blob storage if available
+        try:
+            blob_container_client: ContainerClient = current_app.config[CONFIG_BLOB_CONTAINER_CLIENT]
+            blob_client = blob_container_client.get_blob_client(file.filename)
+            file.seek(0)
+            await blob_client.upload_blob(file, overwrite=True)
+            current_app.logger.info(f"File {file.filename} uploaded to blob storage")
+        except Exception as blob_error:
+            current_app.logger.warning(f"Error uploading to blob storage: {str(blob_error)}")
+            # Continue even if blob storage fails
+        
+        # Run prepdocs.py directly for more reliable processing
+        try:
+            from prepdocs import main as prepdocs_main
+            import threading
+            
+            def run_prepdocs():
+                try:
+                    # Prepare environment variables needed by prepdocs
+                    env = os.environ.copy()
+                    
+                    # Try to get required environment variables from app config
+                    search_service = os.environ.get("AZURE_SEARCH_SERVICE", "")
+                    search_index = os.environ.get("AZURE_SEARCH_INDEX", "")
+                    storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
+                    storage_container = os.environ.get("AZURE_STORAGE_CONTAINER", "")
+                    doc_intelligence = os.environ.get("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "")
+                    
+                    current_app.logger.info(f"Running prepdocs.py with search service: {search_service}")
+                    
+                    # Run prepdocs directly with the specific file
+                    args = [
+                        "--searchservice", search_service,
+                        "--index", search_index,
+                        "--storageaccount", storage_account,
+                        "--container", storage_container,
+                        file_path  # Process just this file
+                    ]
+                    
+                    if doc_intelligence:
+                        args.extend(["--formrecognizerservice", doc_intelligence])
+                    else:
+                        args.append("--localpdfparser")
+                        
+                    current_app.logger.info(f"Running prepdocs with args: {' '.join(args)}")
+                    prepdocs_main(args)
+                    current_app.logger.info("Finished running prepdocs.py")
+                except Exception as e:
+                    current_app.logger.exception(f"Error running prepdocs directly: {str(e)}")
+            
+            # Run in a separate thread to not block the response
+            prepdocs_thread = threading.Thread(target=run_prepdocs)
+            prepdocs_thread.daemon = True
+            prepdocs_thread.start()
+            
+            return jsonify({
+                "message": f"File {file.filename} uploaded successfully and queued for processing", 
+                "status": "success"
+            }), 200
+            
+        except ImportError:
+            # If we can't import prepdocs directly, try the script
+            current_app.logger.info("Could not import prepdocs directly, trying script")
+            script_path = os.path.join(root_dir, "scripts", "prepdocs.sh" if os.name != 'nt' else "prepdocs.ps1")
+            
+            if os.path.exists(script_path):
+                try:
+                    # On Windows use PowerShell, on Unix use bash
+                    if os.name == 'nt':
+                        process = subprocess.Popen(
+                            ["powershell", "-File", script_path], 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE,
+                            cwd=root_dir  # Run from the root directory
+                        )
+                    else:
+                        process = subprocess.Popen(
+                            ["bash", script_path], 
+                            stdout=subprocess.PIPE, 
+                            stderr=subprocess.PIPE,
+                            cwd=root_dir  # Run from the root directory
+                        )
+                    
+                    return jsonify({
+                        "message": f"File {file.filename} uploaded successfully and queued for processing", 
+                        "status": "success"
+                    }), 200
+                    
+                except Exception as script_error:
+                    current_app.logger.exception(f"Error running prepdocs script: {str(script_error)}")
+                    return jsonify({
+                        "message": f"File {file.filename} uploaded but processing could not be started automatically. Try processing manually.", 
+                        "status": "warning"
+                    }), 200
+            else:
+                current_app.logger.warning(f"Script not found: {script_path}")
+                return jsonify({
+                    "message": f"File {file.filename} uploaded but prepdocs script not found. File is saved but not processed.", 
+                    "status": "warning"
+                }), 200
+            
+    except Exception as e:
+        current_app.logger.exception(f"Exception in upload_no_auth: {str(e)}")
+        return jsonify({"message": f"Error uploading file: {str(e)}", "status": "failed"}), 500
 
 
 @bp.before_app_serving

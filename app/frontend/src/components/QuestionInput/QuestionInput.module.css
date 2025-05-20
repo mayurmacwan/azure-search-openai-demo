@@ -45,6 +45,47 @@
     background-color: #235a8e;
 }
 
+.uploadMessage {
+    margin-bottom: 8px;
+    padding: 10px 16px;
+    border-radius: 4px;
+    background-color: #e6f7ff;
+    color: #1890ff;
+    font-size: 14px;
+    animation: fadeIn 0.3s ease;
+    border-left: 4px solid #1890ff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+}
+
+.uploadMessage[data-type="error"] {
+    background-color: #fff2f0;
+    color: #ff4d4f;
+    border-left: 4px solid #ff4d4f;
+}
+
+.uploadMessage[data-type="success"] {
+    background-color: #f6ffed;
+    color: #52c41a;
+    border-left: 4px solid #52c41a;
+}
+
+.uploadMessage[data-type="info"] {
+    background-color: #e6f7ff;
+    color: #1890ff;
+    border-left: 4px solid #1890ff;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(5px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
 @media (min-width: 992px) {
     .questionInputContainer {
         display: flex;

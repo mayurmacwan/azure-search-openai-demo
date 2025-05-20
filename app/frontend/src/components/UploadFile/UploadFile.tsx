@@ -1,11 +1,11 @@
 import React, { useState, ChangeEvent } from "react";
 import { Callout, Label, Text } from "@fluentui/react";
 import { Button } from "@fluentui/react-components";
-import { Add24Regular, Delete24Regular } from "@fluentui/react-icons";
+import { Add24Regular, Delete24Regular, ArrowSync24Regular } from "@fluentui/react-icons";
 import { useMsal } from "@azure/msal-react";
 import { useTranslation } from "react-i18next";
 
-import { SimpleAPIResponse, uploadFileApi, deleteUploadedFileApi, listUploadedFilesApi } from "../../api";
+import { SimpleAPIResponse, uploadFileApi, deleteUploadedFileApi, listUploadedFilesApi, runPrepdocsApi } from "../../api";
 import { useLogin, getToken } from "../../authConfig";
 import styles from "./UploadFile.module.css";
 
@@ -19,6 +19,8 @@ export const UploadFile: React.FC<Props> = ({ className, disabled }: Props) => {
     const [isCalloutVisible, setIsCalloutVisible] = useState<boolean>(false);
     const [isUploading, setIsUploading] = useState<boolean>(false);
     const [isLoading, setIsLoading] = useState<boolean>(true);
+    const [isProcessing, setIsProcessing] = useState<boolean>(false);
+    const [processStatus, setProcessStatus] = useState<string>("");
     const [deletionStatus, setDeletionStatus] = useState<{ [filename: string]: "pending" | "error" | "success" }>({});
     const [uploadedFile, setUploadedFile] = useState<SimpleAPIResponse>();
     const [uploadedFileError, setUploadedFileError] = useState<string>();
@@ -102,6 +104,30 @@ export const UploadFile: React.FC<Props> = ({ className, disabled }: Props) => {
         }
     };
 
+    // Handler for running prepdocs processing
+    const handleRunPrepdocs = async () => {
+        setIsProcessing(true);
+        setProcessStatus("Processing documents...");
+
+        try {
+            const idToken = await getToken(client);
+            if (!idToken) {
+                throw new Error("No authentication token available");
+            }
+
+            const response = await runPrepdocsApi(idToken);
+            setProcessStatus(`${response.message}`);
+        } catch (error) {
+            console.error(error);
+            setProcessStatus("Error processing documents. See console for details.");
+        } finally {
+            setTimeout(() => {
+                setIsProcessing(false);
+                setProcessStatus("");
+            }, 5000); // Clear the status after 5 seconds
+        }
+    };
+
     return (
         <div className={`${styles.container} ${className ?? ""}`}>
             <div>
@@ -134,6 +160,14 @@ export const UploadFile: React.FC<Props> = ({ className, disabled }: Props) => {
                         {isUploading && <Text>{t("upload.uploadingFiles")}</Text>}
                         {!isUploading && uploadedFileError && <Text>{uploadedFileError}</Text>}
                         {!isUploading && uploadedFile && <Text>{uploadedFile.message}</Text>}
+
+                        {/* Add button for processing documents with prepdocs */}
+                        <div className={styles.actionsContainer}>
+                            <Button icon={<ArrowSync24Regular />} onClick={handleRunPrepdocs} disabled={isProcessing || uploadedFiles.length === 0}>
+                                Process All Documents
+                            </Button>
+                            {processStatus && <Text>{processStatus}</Text>}
+                        </div>
 
                         {/* Display the list of already uploaded */}
                         <h3>{t("upload.uploadedFilesLabel")}</h3>

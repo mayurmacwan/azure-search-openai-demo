@@ -1,26 +1,37 @@
 .container {
     display: flex;
-    align-items: center;
-    gap: 0.375em;
-    cursor: pointer;
-    padding: 0.5rem;
+    flex-direction: column;
 }
 
 .callout {
-    padding: 1em;
-    min-height: 6.25em;
+    padding: 16px;
+    max-width: 300px;
+    min-width: 300px;
+}
+
+.chooseFiles {
+    margin-top: 8px;
 }
 
 .list {
     display: flex;
-    justify-content: center;
     align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    margin-bottom: 8px;
 }
 
 .item {
-    width: 15.625em;
-    white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    margin-bottom: 0.75em;
+    white-space: nowrap;
+    margin-right: 16px;
+}
+
+.actionsContainer {
+    margin-top: 16px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }

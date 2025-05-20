@@ -97,6 +97,27 @@ export async function uploadFileApi(request: FormData, idToken: string): Promise
     return dataResponse;
 }
 
+export async function uploadFileNoAuthApi(request: FormData): Promise<SimpleAPIResponse> {
+    try {
+        const response = await fetch("/upload_no_auth", {
+            method: "POST",
+            body: request
+        });
+
+        const dataResponse = await response.json();
+
+        if (!response.ok) {
+            console.error("Upload failed with status:", response.status, dataResponse);
+            throw new Error(dataResponse.message || `Error ${response.status}: ${response.statusText}`);
+        }
+
+        return dataResponse;
+    } catch (error) {
+        console.error("Upload error:", error);
+        throw error; // Re-throw to handle in the component
+    }
+}
+
 export async function deleteUploadedFileApi(filename: string, idToken: string): Promise<SimpleAPIResponse> {
     const headers = await getHeaders(idToken);
     const response = await fetch("/delete_uploaded", {
@@ -124,6 +145,21 @@ export async function listUploadedFilesApi(idToken: string): Promise<string[]> {
     }
 
     const dataResponse: string[] = await response.json();
+    return dataResponse;
+}
+
+export async function runPrepdocsApi(idToken: string): Promise<SimpleAPIResponse> {
+    const headers = await getHeaders(idToken);
+    const response = await fetch("/run_prepdocs", {
+        method: "POST",
+        headers: headers
+    });
+
+    if (!response.ok) {
+        throw new Error(`Running prepdocs failed: ${response.statusText}`);
+    }
+
+    const dataResponse: SimpleAPIResponse = await response.json();
     return dataResponse;
 }
 

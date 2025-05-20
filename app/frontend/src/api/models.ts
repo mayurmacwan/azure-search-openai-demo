@@ -105,6 +105,7 @@ export type Config = {
 
 export type SimpleAPIResponse = {
     message?: string;
+    status?: "success" | "failed" | "warning";
 };
 
 export interface SpeechConfig {
