@@ -32,17 +32,33 @@
     margin-left: 0.5rem;
 }
 
+/* Improved styling for buttons */
 .questionInputButtonsContainer button {
-    background-color: #2d6da8;
-    transition: background-color 0.2s ease;
+    background-color: transparent !important;
+    transition: all 0.2s ease;
     box-shadow: none;
-    padding: 6px 8px;
-    min-width: 32px;
-    height: 32px;
+    padding: 6px;
+    min-width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
 }
 
 .questionInputButtonsContainer button:hover {
-    background-color: #235a8e;
+    background-color: rgba(115, 118, 225, 0.1) !important;
+    transform: scale(1.05);
+}
+
+.questionInputButtonsContainer button:active {
+    transform: scale(0.95);
+}
+
+.questionInputButtonsContainer button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
 }
 
 .uploadMessage {

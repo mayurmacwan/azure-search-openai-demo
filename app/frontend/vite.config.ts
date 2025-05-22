@@ -4,11 +4,11 @@ import react from "@vitejs/plugin-react";
 // https://vitejs.dev/config/
 export default ({ mode }) => {
     // Load env variables from .env files
-    const env = loadEnv(mode, process.cwd(), '');
-    
+    const env = loadEnv(mode, process.cwd(), "");
+
     // API base URL from environment or default to relative path for local dev
     const apiBaseUrl = env.VITE_API_BASE_URL || "";
-    
+
     return defineConfig({
         plugins: [react()],
         resolve: {
@@ -16,7 +16,7 @@ export default ({ mode }) => {
         },
         build: {
             // For SPA deployment, output to dist folder
-            outDir: mode === 'production' ? 'dist' : '../backend/static',
+            outDir: mode === "production" ? "dist" : "../backend/static",
             emptyOutDir: true,
             sourcemap: true,
             rollupOptions: {
@@ -36,7 +36,7 @@ export default ({ mode }) => {
         },
         define: {
             // Make API base URL available in the app
-            '__API_BASE_URL__': JSON.stringify(apiBaseUrl)
+            __API_BASE_URL__: JSON.stringify(apiBaseUrl)
         },
         server: {
             proxy: {
@@ -54,4 +54,4 @@ export default ({ mode }) => {
             }
         }
     });
-}
+};

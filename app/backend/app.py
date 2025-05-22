@@ -90,7 +90,8 @@ from config import (
     CONFIG_USER_UPLOAD_ENABLED,
     CONFIG_VECTOR_SEARCH_ENABLED,
 )
-from core.authentication import AuthenticationHelper
+from core.authentication import AuthenticationHelper, AuthError
+from core.mock_auth import MockAuthenticationHelper
 from core.sessionhelper import create_session_id
 from decorators import authenticated, authenticated_path
 from error import error_dict, error_response
@@ -1036,6 +1037,9 @@ def create_app():
         app.asgi_app = OpenTelemetryMiddleware(app.asgi_app)
     
     # Initialize AuthenticationHelper in the app config
-    app.config[CONFIG_AUTH_CLIENT] = AuthenticationHelper()
+    if os.environ.get("AZURE_USE_AUTHENTICATION", "").lower() == "false":
+        app.config[CONFIG_AUTH_CLIENT] = MockAuthenticationHelper()
+    else:
+        app.config[CONFIG_AUTH_CLIENT] = AuthenticationHelper()
     
     return app

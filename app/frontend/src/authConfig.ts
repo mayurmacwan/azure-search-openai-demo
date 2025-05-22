@@ -1,6 +1,7 @@
 // Refactored from https://github.com/Azure-Samples/ms-identity-javascript-react-tutorial/blob/main/1-Authentication/1-sign-in/SPA/src/authConfig.js
 
 import { IPublicClientApplication } from "@azure/msal-browser";
+import { getApiUrl, getMockAuthSetup } from "./api/apiConfig";
 
 const appServicesAuthTokenUrl = ".auth/me";
 const appServicesAuthTokenRefreshUrl = ".auth/refresh";
@@ -54,7 +55,14 @@ interface AuthSetup {
 
 // Fetch the auth setup JSON data from the API if not already cached
 async function fetchAuthSetup(): Promise<AuthSetup> {
-    const response = await fetch("/auth_setup");
+    const url = getApiUrl("/auth_setup");
+
+    // If we're using mock auth setup
+    if (url === "MOCK_AUTH_SETUP") {
+        return getMockAuthSetup();
+    }
+
+    const response = await fetch(url);
     if (!response.ok) {
         throw new Error(`auth setup response was not ok: ${response.status}`);
     }
