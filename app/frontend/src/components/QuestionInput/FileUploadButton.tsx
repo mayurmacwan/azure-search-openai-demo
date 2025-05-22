@@ -1,6 +1,6 @@
 import { ChangeEvent, useRef, useState } from "react";
 import { Button, Tooltip } from "@fluentui/react-components";
-import { AttachRegular } from "@fluentui/react-icons";
+import { AttachRegular, Attach28Regular } from "@fluentui/react-icons";
 
 import { uploadFileNoAuthApi } from "../../api";
 import styles from "./QuestionInput.module.css";
@@ -113,7 +113,7 @@ export const FileUploadButton = ({ onUploadComplete }: Props) => {
             <Tooltip content="Upload Document" relationship="label">
                 <Button
                     size="large"
-                    icon={<AttachRegular primaryFill={isUploading ? "rgba(173, 173, 173, 0.8)" : "rgba(115, 118, 225, 1)"} />}
+                    icon={<Attach28Regular primaryFill={isUploading ? "rgba(255, 255, 255, 0.7)" : "white"} />}
                     onClick={handleUploadClick}
                     disabled={isUploading}
                     aria-label="Upload Document"

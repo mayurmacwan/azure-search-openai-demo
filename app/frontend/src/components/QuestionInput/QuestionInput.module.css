@@ -1,18 +1,18 @@
 .questionInputContainer {
-    border-radius: 8px;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+    border-radius: 12px;
+    box-shadow: 0 4px 15px rgba(115, 118, 225, 0.15);
     width: 100%;
-    padding: 0.7rem 1rem;
+    padding: 0.8rem 1.2rem;
     background: white;
-    border: 1px solid #e0e0e0;
-    transition: all 0.2s ease;
+    border: 1px solid rgba(115, 118, 225, 0.3);
+    transition: all 0.3s ease;
     display: flex;
     align-items: center;
 }
 
 .questionInputContainer:focus-within {
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
-    border-color: #2d6da8;
+    box-shadow: 0 6px 20px rgba(115, 118, 225, 0.25);
+    border-color: rgba(115, 118, 225, 0.6);
 }
 
 .questionInputTextArea {
@@ -32,17 +32,41 @@
     margin-left: 0.5rem;
 }
 
+/* Completely redesigned button styling */
 .questionInputButtonsContainer button {
-    background-color: #2d6da8;
-    transition: background-color 0.2s ease;
-    box-shadow: none;
-    padding: 6px 8px;
-    min-width: 32px;
-    height: 32px;
+    background: linear-gradient(135deg, #7376e1, #5a5dd6) !important;
+    transition: all 0.2s ease;
+    box-shadow: 0 3px 8px rgba(115, 118, 225, 0.5);
+    padding: 10px;
+    min-width: 46px;
+    height: 46px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    margin: 0 3px;
+    animation: subtle-pulse 2s infinite;
 }
 
 .questionInputButtonsContainer button:hover {
-    background-color: #235a8e;
+    background: linear-gradient(135deg, #8a8de8, #6d70e0) !important;
+    box-shadow: 0 4px 8px rgba(115, 118, 225, 0.5);
+    transform: translateY(-2px);
+}
+
+.questionInputButtonsContainer button:active {
+    background: linear-gradient(135deg, #6063d4, #4a4dc7) !important;
+    box-shadow: 0 1px 3px rgba(115, 118, 225, 0.3);
+    transform: translateY(1px);
+}
+
+.questionInputButtonsContainer button:disabled {
+    background: linear-gradient(135deg, #c5c6e8, #b8b9e0) !important;
+    box-shadow: none;
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
 }
 
 .uploadMessage {
@@ -83,6 +107,18 @@
     to {
         opacity: 1;
         transform: translateY(0);
+    }
+}
+
+@keyframes subtle-pulse {
+    0% {
+        box-shadow: 0 3px 8px rgba(115, 118, 225, 0.5);
+    }
+    50% {
+        box-shadow: 0 5px 15px rgba(115, 118, 225, 0.7);
+    }
+    100% {
+        box-shadow: 0 3px 8px rgba(115, 118, 225, 0.5);
     }
 }
 
