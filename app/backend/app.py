@@ -1005,34 +1005,37 @@ async def close_clients():
 
 
 def create_app():
-    app = Quart(__name__)
+    app = Quart(__name__, static_folder="static")
+    
+    # Enable CORS for all origins when deployed as SPA
+    # The following environments will enable all-origin CORS
+    # DEPLOYMENT_MODE can be "SPA" or other values
+    is_spa_deployment = os.environ.get("DEPLOYMENT_MODE", "").upper() == "SPA"
+    
+    if is_spa_deployment:
+        # For SPA deployment, allow all origins
+        app = cors(app, allow_origin="*")
+    else:
+        # For local or container deployment, use the default CORS config
+        app = cors(app)
+    
+    # Register blueprints and middleware
     app.register_blueprint(bp)
-    app.register_blueprint(chat_history_cosmosdb_bp)
-
-    if os.getenv("APPLICATIONINSIGHTS_CONNECTION_STRING"):
-        app.logger.info("APPLICATIONINSIGHTS_CONNECTION_STRING is set, enabling Azure Monitor")
+    if CONFIG_CHAT_HISTORY_COSMOS_ENABLED:
+        app.register_blueprint(chat_history_cosmosdb_bp)
+    
+    # Configure JSON serialization
+    app.json_encoder = JSONEncoder
+    
+    # Setup telemetry if enabled
+    if "APPLICATIONINSIGHTS_CONNECTION_STRING" in os.environ:
         configure_azure_monitor()
-        # This tracks HTTP requests made by aiohttp:
         AioHttpClientInstrumentor().instrument()
-        # This tracks HTTP requests made by httpx:
         HTTPXClientInstrumentor().instrument()
-        # This tracks OpenAI SDK requests:
         OpenAIInstrumentor().instrument()
-        # This middleware tracks app route requests:
-        app.asgi_app = OpenTelemetryMiddleware(app.asgi_app)  # type: ignore[assignment]
-
-    # Log levels should be one of https://docs.python.org/3/library/logging.html#logging-levels
-    # Set root level to WARNING to avoid seeing overly verbose logs from SDKS
-    logging.basicConfig(level=logging.WARNING)
-    # Set our own logger levels to INFO by default
-    app_level = os.getenv("APP_LOG_LEVEL", "INFO")
-    app.logger.setLevel(os.getenv("APP_LOG_LEVEL", app_level))
-    logging.getLogger("scripts").setLevel(app_level)
-
-    if allowed_origin := os.getenv("ALLOWED_ORIGIN"):
-        allowed_origins = allowed_origin.split(";")
-        if len(allowed_origins) > 0:
-            app.logger.info("CORS enabled for %s", allowed_origins)
-            cors(app, allow_origin=allowed_origins, allow_methods=["GET", "POST"])
-
+        app.asgi_app = OpenTelemetryMiddleware(app.asgi_app)
+    
+    # Initialize AuthenticationHelper in the app config
+    app.config[CONFIG_AUTH_CLIENT] = AuthenticationHelper()
+    
     return app

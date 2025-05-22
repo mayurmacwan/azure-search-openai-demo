@@ -1,7 +1,6 @@
-const BACKEND_URI = "";
-
 import { ChatAppResponse, ChatAppResponseOrError, ChatAppRequest, Config, SimpleAPIResponse, HistoryListApiResponse, HistoryApiResponse } from "./models";
 import { useLogin, getToken, isUsingAppServicesLogin } from "../authConfig";
+import { getApiUrl } from "./apiConfig";
 
 export async function getHeaders(idToken: string | undefined): Promise<Record<string, string>> {
     // If using login and not using app services, add the id token of the logged in account as the authorization
@@ -15,7 +14,7 @@ export async function getHeaders(idToken: string | undefined): Promise<Record<st
 }
 
 export async function configApi(): Promise<Config> {
-    const response = await fetch(`${BACKEND_URI}/config`, {
+    const response = await fetch(getApiUrl("/config"), {
         method: "GET"
     });
 
@@ -24,7 +23,7 @@ export async function configApi(): Promise<Config> {
 
 export async function askApi(request: ChatAppRequest, idToken: string | undefined): Promise<ChatAppResponse> {
     const headers = await getHeaders(idToken);
-    const response = await fetch(`${BACKEND_URI}/ask`, {
+    const response = await fetch(getApiUrl("/ask"), {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(request)
@@ -42,10 +41,7 @@ export async function askApi(request: ChatAppRequest, idToken: string | undefine
 }
 
 export async function chatApi(request: ChatAppRequest, shouldStream: boolean, idToken: string | undefined): Promise<Response> {
-    let url = `${BACKEND_URI}/chat`;
-    if (shouldStream) {
-        url += "/stream";
-    }
+    let url = shouldStream ? getApiUrl("/chat/stream") : getApiUrl("/chat");
     const headers = await getHeaders(idToken);
     return await fetch(url, {
         method: "POST",
@@ -55,7 +51,7 @@ export async function chatApi(request: ChatAppRequest, shouldStream: boolean, id
 }
 
 export async function getSpeechApi(text: string): Promise<string | null> {
-    return await fetch("/speech", {
+    return await fetch(getApiUrl("/speech"), {
         method: "POST",
         headers: {
             "Content-Type": "application/json"
@@ -79,11 +75,11 @@ export async function getSpeechApi(text: string): Promise<string | null> {
 }
 
 export function getCitationFilePath(citation: string): string {
-    return `${BACKEND_URI}/content/${citation}`;
+    return getApiUrl(`/content/${citation}`);
 }
 
 export async function uploadFileApi(request: FormData, idToken: string): Promise<SimpleAPIResponse> {
-    const response = await fetch("/upload", {
+    const response = await fetch(getApiUrl("/upload"), {
         method: "POST",
         headers: await getHeaders(idToken),
         body: request
@@ -99,7 +95,7 @@ export async function uploadFileApi(request: FormData, idToken: string): Promise
 
 export async function uploadFileNoAuthApi(request: FormData): Promise<SimpleAPIResponse> {
     try {
-        const response = await fetch("/upload_no_auth", {
+        const response = await fetch(getApiUrl("/upload_no_auth"), {
             method: "POST",
             body: request
         });
@@ -120,7 +116,7 @@ export async function uploadFileNoAuthApi(request: FormData): Promise<SimpleAPIR
 
 export async function deleteUploadedFileApi(filename: string, idToken: string): Promise<SimpleAPIResponse> {
     const headers = await getHeaders(idToken);
-    const response = await fetch("/delete_uploaded", {
+    const response = await fetch(getApiUrl("/delete_uploaded"), {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify({ filename })
@@ -135,7 +131,7 @@ export async function deleteUploadedFileApi(filename: string, idToken: string): 
 }
 
 export async function listUploadedFilesApi(idToken: string): Promise<string[]> {
-    const response = await fetch(`/list_uploaded`, {
+    const response = await fetch(getApiUrl("/list_uploaded"), {
         method: "GET",
         headers: await getHeaders(idToken)
     });
@@ -150,7 +146,7 @@ export async function listUploadedFilesApi(idToken: string): Promise<string[]> {
 
 export async function runPrepdocsApi(idToken: string): Promise<SimpleAPIResponse> {
     const headers = await getHeaders(idToken);
-    const response = await fetch("/run_prepdocs", {
+    const response = await fetch(getApiUrl("/run_prepdocs"), {
         method: "POST",
         headers: headers
     });
@@ -165,7 +161,7 @@ export async function runPrepdocsApi(idToken: string): Promise<SimpleAPIResponse
 
 export async function postChatHistoryApi(item: any, idToken: string): Promise<any> {
     const headers = await getHeaders(idToken);
-    const response = await fetch("/chat_history", {
+    const response = await fetch(getApiUrl("/chat_history"), {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
         body: JSON.stringify(item)
@@ -181,12 +177,12 @@ export async function postChatHistoryApi(item: any, idToken: string): Promise<an
 
 export async function getChatHistoryListApi(count: number, continuationToken: string | undefined, idToken: string): Promise<HistoryListApiResponse> {
     const headers = await getHeaders(idToken);
-    let url = `${BACKEND_URI}/chat_history/sessions?count=${count}`;
+    let url = getApiUrl(`/chat_history/sessions?count=${count}`);
     if (continuationToken) {
         url += `&continuationToken=${continuationToken}`;
     }
 
-    const response = await fetch(url.toString(), {
+    const response = await fetch(url, {
         method: "GET",
         headers: { ...headers, "Content-Type": "application/json" }
     });
@@ -201,7 +197,7 @@ export async function getChatHistoryListApi(count: number, continuationToken: st
 
 export async function getChatHistoryApi(id: string, idToken: string): Promise<HistoryApiResponse> {
     const headers = await getHeaders(idToken);
-    const response = await fetch(`/chat_history/sessions/${id}`, {
+    const response = await fetch(getApiUrl(`/chat_history/sessions/${id}`), {
         method: "GET",
         headers: { ...headers, "Content-Type": "application/json" }
     });
@@ -216,7 +212,7 @@ export async function getChatHistoryApi(id: string, idToken: string): Promise<Hi
 
 export async function deleteChatHistoryApi(id: string, idToken: string): Promise<any> {
     const headers = await getHeaders(idToken);
-    const response = await fetch(`/chat_history/sessions/${id}`, {
+    const response = await fetch(getApiUrl(`/chat_history/sessions/${id}`), {
         method: "DELETE",
         headers: { ...headers, "Content-Type": "application/json" }
     });
