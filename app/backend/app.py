@@ -4,6 +4,7 @@ import json
 import logging
 import mimetypes
 import os
+import tempfile
 import time
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -225,12 +226,20 @@ async def chat(auth_claims: dict[str, Any]):
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
-        use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
-        approach: Approach
-        if use_gpt4v and CONFIG_CHAT_VISION_APPROACH in current_app.config:
-            approach = cast(Approach, current_app.config[CONFIG_CHAT_VISION_APPROACH])
+        # Check if we should use the AssistantChatApproach for uploaded files
+        assistant_id = current_app.config.get("OPENAI_ASSISTANT_ID")
+        if assistant_id and "ASSISTANT_CHAT_APPROACH" in current_app.config:
+            # Use the custom approach for assistant-based chat
+            approach = current_app.config["ASSISTANT_CHAT_APPROACH"]
+            current_app.logger.info(f"Using AssistantChatApproach with assistant_id {assistant_id}")
         else:
-            approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
+            # Otherwise use the standard approach based on GPT4V flag
+            use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
+            approach: Approach
+            if use_gpt4v and CONFIG_CHAT_VISION_APPROACH in current_app.config:
+                approach = cast(Approach, current_app.config[CONFIG_CHAT_VISION_APPROACH])
+            else:
+                approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
 
         # If session state is provided, persists the session state,
         # else creates a new session_id depending on the chat history options enabled.
@@ -240,7 +249,11 @@ async def chat(auth_claims: dict[str, Any]):
                 current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
                 current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
             )
-        result = await approach.run(
+        result = await approach.run_conversation(
+            request_json["messages"],
+            context.get("overrides", {}),
+            auth_claims
+        ) if isinstance(approach, current_app.config["ASSISTANT_CHAT_APPROACH"].__class__) else await approach.run(
             request_json["messages"],
             context=context,
             session_state=session_state,
@@ -259,30 +272,46 @@ async def chat_stream(auth_claims: dict[str, Any]):
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
-        use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
-        approach: Approach
-        if use_gpt4v and CONFIG_CHAT_VISION_APPROACH in current_app.config:
-            approach = cast(Approach, current_app.config[CONFIG_CHAT_VISION_APPROACH])
+        # Check if we should use the AssistantChatApproach for uploaded files
+        assistant_id = current_app.config.get("OPENAI_ASSISTANT_ID")
+        if assistant_id and "ASSISTANT_CHAT_APPROACH" in current_app.config:
+            # The Assistant API doesn't support streaming directly yet
+            # Return a notice that streaming is not supported with the Assistant API
+            current_app.logger.info(f"Streaming not supported with AssistantChatApproach")
+            result = {
+                "message": {"role": "assistant", "content": "Streaming not supported with uploaded documents. Please use the regular chat endpoint."},
+                "context": {"data_points": [], "followup_questions": None}
+            }
+            response = await make_response(json.dumps(result) + "\n")
+            response.timeout = None  # type: ignore
+            response.mimetype = "application/json-lines"
+            return response
         else:
-            approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
+            # Otherwise use the standard approach based on GPT4V flag
+            use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
+            approach: Approach
+            if use_gpt4v and CONFIG_CHAT_VISION_APPROACH in current_app.config:
+                approach = cast(Approach, current_app.config[CONFIG_CHAT_VISION_APPROACH])
+            else:
+                approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
 
-        # If session state is provided, persists the session state,
-        # else creates a new session_id depending on the chat history options enabled.
-        session_state = request_json.get("session_state")
-        if session_state is None:
-            session_state = create_session_id(
-                current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
-                current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
+            # If session state is provided, persists the session state,
+            # else creates a new session_id depending on the chat history options enabled.
+            session_state = request_json.get("session_state")
+            if session_state is None:
+                session_state = create_session_id(
+                    current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
+                    current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
+                )
+            result = await approach.run_stream(
+                request_json["messages"],
+                context=context,
+                session_state=session_state,
             )
-        result = await approach.run_stream(
-            request_json["messages"],
-            context=context,
-            session_state=session_state,
-        )
-        response = await make_response(format_as_ndjson(result))
-        response.timeout = None  # type: ignore
-        response.mimetype = "application/json-lines"
-        return response
+            response = await make_response(format_as_ndjson(result))
+            response.timeout = None  # type: ignore
+            response.mimetype = "application/json-lines"
+            return response
     except Exception as error:
         return error_response(error, "/chat")
 
@@ -475,8 +504,27 @@ async def run_prepdocs(auth_claims: dict[str, Any]):
 
 @bp.post("/upload_no_auth")
 async def upload_no_auth():
-    """Upload endpoint that doesn't require authentication and bypasses the user upload system"""
+    """Upload endpoint that doesn't require authentication and uses OpenAI Assistants API through Azure"""
     try:
+        # Use the existing Azure OpenAI client
+        openai_client: AsyncOpenAI = current_app.config[CONFIG_OPENAI_CLIENT]
+        
+        # Check if we have Azure OpenAI configured
+        OPENAI_HOST = os.getenv("OPENAI_HOST", "")
+        if OPENAI_HOST and not OPENAI_HOST.startswith("azure"):
+            current_app.logger.warning(f"OPENAI_HOST is set to {OPENAI_HOST}, but we need Azure OpenAI for Assistants API")
+            return jsonify({
+                "message": "Azure OpenAI is not configured. Please set OPENAI_HOST to 'azure' in your environment variables.",
+                "status": "failed"
+            }), 500
+        
+        # Log OpenAI configuration for debugging
+        try:
+            current_app.logger.info(f"OpenAI client type: {type(openai_client).__name__}")
+            current_app.logger.info(f"OpenAI base URL: {openai_client.base_url}")
+        except Exception as log_error:
+            current_app.logger.warning(f"Could not log OpenAI client details: {str(log_error)}")
+        
         request_files = await request.files
         if "file" not in request_files:
             # If no files were included in the request, return an error response
@@ -493,130 +541,100 @@ async def upload_no_auth():
         # Reset file pointer
         file.seek(0)
         
-        # Get absolute paths for better reliability
-        import os, sys, subprocess
-        from pathlib import Path
+        # Create a temporary file that OpenAI can properly handle
+        # Create a temporary file with the proper name
+        temp_file_path = ""
+        with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
+            temp_file.write(file_content)
+            temp_file_path = temp_file.name
         
-        # Get the project root directory (2 levels up from the current file)
-        current_dir = os.path.dirname(os.path.abspath(__file__))
-        root_dir = os.path.dirname(os.path.dirname(current_dir))
-        data_dir = os.path.join(root_dir, "data")
+        file_id = None
+        assistant_id = None
         
-        # Make sure directory exists
+        try:
+            # Upload file to Azure OpenAI using the temporary file path
+            current_app.logger.info(f"Uploading file {file.filename} to Azure OpenAI")
+            try:
+                with open(temp_file_path, "rb") as file_to_upload:
+                    file_object = await openai_client.files.create(
+                        file=file_to_upload,
+                        purpose="assistants"
+                    )
+                file_id = file_object.id
+                current_app.logger.info(f"File uploaded to Azure OpenAI with ID: {file_id}")
+            except Exception as api_error:
+                current_app.logger.exception(f"Azure OpenAI API error during file upload: {str(api_error)}")
+                return jsonify({
+                    "message": f"Error uploading file to Azure OpenAI: {str(api_error)}. Please ensure your Azure OpenAI service has the Assistants API enabled.", 
+                    "status": "failed"
+                }), 500
+            
+            # Create or get the existing assistant
+            # Check if we have an assistant ID stored
+            assistant_id = current_app.config.get("OPENAI_ASSISTANT_ID")
+            
+            if not assistant_id:
+                # Create a new assistant if we don't have one
+                current_app.logger.info("Creating new Azure OpenAI Assistant")
+                try:
+                    # Get the model deployment name from env variables
+                    deployment_name = os.getenv("AZURE_OPENAI_CHATGPT_DEPLOYMENT")
+                    if not deployment_name:
+                        current_app.logger.warning("AZURE_OPENAI_CHATGPT_DEPLOYMENT not set, using gpt-4-turbo")
+                        deployment_name = "gpt-4-turbo"
+                    
+                    assistant = await openai_client.beta.assistants.create(
+                        name="Document Assistant",
+                        instructions="You are a helpful assistant that can answer questions about uploaded documents.",
+                        tools=[{"type": "retrieval"}],
+                        model=deployment_name
+                    )
+                    assistant_id = assistant.id
+                    current_app.logger.info(f"Created new Azure OpenAI Assistant with ID: {assistant_id}")
+                    # Store the assistant ID in the app config
+                    current_app.config["OPENAI_ASSISTANT_ID"] = assistant_id
+                except Exception as assistant_error:
+                    current_app.logger.exception(f"Error creating Azure OpenAI Assistant: {str(assistant_error)}")
+                    return jsonify({
+                        "message": f"Error creating Azure OpenAI Assistant: {str(assistant_error)}. Please check your Azure OpenAI configuration.", 
+                        "status": "failed"
+                    }), 500
+            else:
+                current_app.logger.info(f"Using existing Azure OpenAI Assistant with ID: {assistant_id}")
+            
+            # Attach the file to the assistant
+            current_app.logger.info(f"Attaching file {file_id} to assistant {assistant_id}")
+            try:
+                await openai_client.beta.assistants.files.create(
+                    assistant_id=assistant_id,
+                    file_id=file_id
+                )
+            except Exception as attach_error:
+                current_app.logger.exception(f"Error attaching file to Azure OpenAI Assistant: {str(attach_error)}")
+                return jsonify({
+                    "message": f"Error attaching file to Azure OpenAI Assistant: {str(attach_error)}", 
+                    "status": "failed"
+                }), 500
+        finally:
+            # Clean up the temporary file
+            if temp_file_path and os.path.exists(temp_file_path):
+                os.unlink(temp_file_path)
+        
+        # Save the file locally too so we have a copy
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
         os.makedirs(data_dir, exist_ok=True)
-        
-        current_app.logger.info(f"Root directory: {root_dir}")
-        current_app.logger.info(f"Data directory: {data_dir}")
-        
-        # Save the file to the data directory
         file_path = os.path.join(data_dir, file.filename)
-        current_app.logger.info(f"Saving file to: {file_path}")
+        current_app.logger.info(f"Saving local copy to: {file_path}")
         
         with open(file_path, "wb") as f:
             f.write(file_content)
-        
-        current_app.logger.info(f"File saved: {file_path}")
-        
-        # Also save to blob storage if available
-        try:
-            blob_container_client: ContainerClient = current_app.config[CONFIG_BLOB_CONTAINER_CLIENT]
-            blob_client = blob_container_client.get_blob_client(file.filename)
-            file.seek(0)
-            await blob_client.upload_blob(file, overwrite=True)
-            current_app.logger.info(f"File {file.filename} uploaded to blob storage")
-        except Exception as blob_error:
-            current_app.logger.warning(f"Error uploading to blob storage: {str(blob_error)}")
-            # Continue even if blob storage fails
-        
-        # Run prepdocs.py directly for more reliable processing
-        try:
-            from prepdocs import main as prepdocs_main
-            import threading
             
-            def run_prepdocs():
-                try:
-                    # Prepare environment variables needed by prepdocs
-                    env = os.environ.copy()
-                    
-                    # Try to get required environment variables from app config
-                    search_service = os.environ.get("AZURE_SEARCH_SERVICE", "")
-                    search_index = os.environ.get("AZURE_SEARCH_INDEX", "")
-                    storage_account = os.environ.get("AZURE_STORAGE_ACCOUNT", "")
-                    storage_container = os.environ.get("AZURE_STORAGE_CONTAINER", "")
-                    doc_intelligence = os.environ.get("AZURE_DOCUMENTINTELLIGENCE_SERVICE", "")
-                    
-                    current_app.logger.info(f"Running prepdocs.py with search service: {search_service}")
-                    
-                    # Run prepdocs directly with the specific file
-                    args = [
-                        "--searchservice", search_service,
-                        "--index", search_index,
-                        "--storageaccount", storage_account,
-                        "--container", storage_container,
-                        file_path  # Process just this file
-                    ]
-                    
-                    if doc_intelligence:
-                        args.extend(["--formrecognizerservice", doc_intelligence])
-                    else:
-                        args.append("--localpdfparser")
-                        
-                    current_app.logger.info(f"Running prepdocs with args: {' '.join(args)}")
-                    prepdocs_main(args)
-                    current_app.logger.info("Finished running prepdocs.py")
-                except Exception as e:
-                    current_app.logger.exception(f"Error running prepdocs directly: {str(e)}")
-            
-            # Run in a separate thread to not block the response
-            prepdocs_thread = threading.Thread(target=run_prepdocs)
-            prepdocs_thread.daemon = True
-            prepdocs_thread.start()
-            
-            return jsonify({
-                "message": f"File {file.filename} uploaded successfully and queued for processing", 
-                "status": "success"
-            }), 200
-            
-        except ImportError:
-            # If we can't import prepdocs directly, try the script
-            current_app.logger.info("Could not import prepdocs directly, trying script")
-            script_path = os.path.join(root_dir, "scripts", "prepdocs.sh" if os.name != 'nt' else "prepdocs.ps1")
-            
-            if os.path.exists(script_path):
-                try:
-                    # On Windows use PowerShell, on Unix use bash
-                    if os.name == 'nt':
-                        process = subprocess.Popen(
-                            ["powershell", "-File", script_path], 
-                            stdout=subprocess.PIPE, 
-                            stderr=subprocess.PIPE,
-                            cwd=root_dir  # Run from the root directory
-                        )
-                    else:
-                        process = subprocess.Popen(
-                            ["bash", script_path], 
-                            stdout=subprocess.PIPE, 
-                            stderr=subprocess.PIPE,
-                            cwd=root_dir  # Run from the root directory
-                        )
-                    
-                    return jsonify({
-                        "message": f"File {file.filename} uploaded successfully and queued for processing", 
-                        "status": "success"
-                    }), 200
-                    
-                except Exception as script_error:
-                    current_app.logger.exception(f"Error running prepdocs script: {str(script_error)}")
-                    return jsonify({
-                        "message": f"File {file.filename} uploaded but processing could not be started automatically. Try processing manually.", 
-                        "status": "warning"
-                    }), 200
-            else:
-                current_app.logger.warning(f"Script not found: {script_path}")
-                return jsonify({
-                    "message": f"File {file.filename} uploaded but prepdocs script not found. File is saved but not processed.", 
-                    "status": "warning"
-                }), 200
+        return jsonify({
+            "message": f"File {file.filename} uploaded to Azure OpenAI Assistant successfully", 
+            "status": "success",
+            "file_id": file_id,
+            "assistant_id": assistant_id
+        }), 200
             
     except Exception as e:
         current_app.logger.exception(f"Exception in upload_no_auth: {str(e)}")
@@ -995,6 +1013,10 @@ async def setup_clients():
             query_speller=AZURE_SEARCH_QUERY_SPELLER,
             prompt_manager=prompt_manager,
         )
+
+    # Register our custom ChatApproach implementation for handling file uploads
+    from approaches.chat import ChatApproach as AssistantChatApproach
+    current_app.config["ASSISTANT_CHAT_APPROACH"] = AssistantChatApproach(openai_client)
 
 
 @bp.after_app_serving

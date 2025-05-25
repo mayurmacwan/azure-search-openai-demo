@@ -39,10 +39,12 @@ export const FileUploadButton = ({ onUploadComplete }: Props) => {
             formData.append("file", file);
 
             if (onUploadComplete) {
-                onUploadComplete(`Uploading ${file.name}...`);
+                onUploadComplete(`Uploading ${file.name} to Azure OpenAI Assistant...`);
             }
 
             console.log(`Uploading file: ${file.name} (${file.size} bytes)`);
+
+            // Use Azure OpenAI Assistants API
             const response = await uploadFileNoAuthApi(formData);
             console.log("Upload response:", response);
 
@@ -54,10 +56,7 @@ export const FileUploadButton = ({ onUploadComplete }: Props) => {
             } else if (response.status === "success") {
                 // Full success
                 if (onUploadComplete) {
-                    onUploadComplete(
-                        `${file.name} uploaded successfully! Document processing has started. ` +
-                            `This can take 2-5 minutes before the document is available for questions.`
-                    );
+                    onUploadComplete(`${file.name} uploaded successfully to Azure OpenAI! You can now ask questions about this file.`);
                 }
             } else {
                 // Unknown status
@@ -110,13 +109,13 @@ export const FileUploadButton = ({ onUploadComplete }: Props) => {
                 onChange={handleFileChange}
                 accept=".txt, .md, .json, .png, .jpg, .jpeg, .bmp, .heic, .tiff, .pdf, .docx, .xlsx, .pptx, .html"
             />
-            <Tooltip content="Upload Document" relationship="label">
+            <Tooltip content="Upload Document to Azure OpenAI Assistant" relationship="label">
                 <Button
                     size="large"
                     icon={<Attach28Regular primaryFill={isUploading ? "rgba(255, 255, 255, 0.7)" : "white"} />}
                     onClick={handleUploadClick}
                     disabled={isUploading}
-                    aria-label="Upload Document"
+                    aria-label="Upload Document to Azure OpenAI Assistant"
                 />
             </Tooltip>
         </div>

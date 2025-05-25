@@ -103,10 +103,12 @@ export type Config = {
     showAgenticRetrievalOption: boolean;
 };
 
-export type SimpleAPIResponse = {
-    message?: string;
-    status?: "success" | "failed" | "warning";
-};
+export interface SimpleAPIResponse {
+    status: string;
+    message: string;
+    file_id?: string;
+    assistant_id?: string;
+}
 
 export interface SpeechConfig {
     speechUrls: (string | null)[];

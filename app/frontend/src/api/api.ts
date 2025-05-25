@@ -107,7 +107,13 @@ export async function uploadFileNoAuthApi(request: FormData): Promise<SimpleAPIR
             throw new Error(dataResponse.message || `Error ${response.status}: ${response.statusText}`);
         }
 
-        return dataResponse;
+        // Include file_id and assistant_id in the response if available
+        return {
+            status: dataResponse.status || "success",
+            message: dataResponse.message || "File uploaded successfully",
+            file_id: dataResponse.file_id,
+            assistant_id: dataResponse.assistant_id
+        };
     } catch (error) {
         console.error("Upload error:", error);
         throw error; // Re-throw to handle in the component
