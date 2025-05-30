@@ -4,6 +4,8 @@ import json
 import logging
 import mimetypes
 import os
+import uuid
+import datetime
 import tempfile
 import time
 from collections.abc import AsyncGenerator
@@ -19,14 +21,13 @@ from azure.cognitiveservices.speech import (
 )
 from azure.core.exceptions import ResourceNotFoundError
 from azure.identity.aio import (
-    AzureDeveloperCliCredential,
     ManagedIdentityCredential,
+    DefaultAzureCredential,
+    ClientSecretCredential,
     get_bearer_token_provider,
 )
 from azure.monitor.opentelemetry import configure_azure_monitor
-from azure.search.documents.agent.aio import KnowledgeAgentRetrievalClient
-from azure.search.documents.aio import SearchClient
-from azure.search.documents.indexes.aio import SearchIndexClient
+# Removed RAG-related imports as part of pure chatbot implementation
 from azure.storage.blob.aio import ContainerClient
 from azure.storage.blob.aio import StorageStreamDownloader as BlobDownloader
 from azure.storage.filedatalake.aio import FileSystemClient
@@ -52,33 +53,20 @@ from quart import (
 from quart_cors import cors
 
 from approaches.approach import Approach
-from approaches.chatreadretrieveread import ChatReadRetrieveReadApproach
-from approaches.chatreadretrievereadvision import ChatReadRetrieveReadVisionApproach
-from approaches.promptmanager import PromptyManager
-from approaches.retrievethenread import RetrieveThenReadApproach
-from approaches.retrievethenreadvision import RetrieveThenReadVisionApproach
+from approaches.purechat import PureChatApproach
+from approaches.promptmanager import PromptManager
 from chat_history.cosmosdb import chat_history_cosmosdb_bp
 from config import (
-    CONFIG_AGENT_CLIENT,
-    CONFIG_AGENTIC_RETRIEVAL_ENABLED,
     CONFIG_ASK_APPROACH,
-    CONFIG_ASK_VISION_APPROACH,
     CONFIG_AUTH_CLIENT,
     CONFIG_BLOB_CONTAINER_CLIENT,
     CONFIG_CHAT_APPROACH,
     CONFIG_CHAT_HISTORY_BROWSER_ENABLED,
     CONFIG_CHAT_HISTORY_COSMOS_ENABLED,
-    CONFIG_CHAT_VISION_APPROACH,
     CONFIG_CREDENTIAL,
-    CONFIG_DEFAULT_REASONING_EFFORT,
     CONFIG_GPT4V_DEPLOYED,
-    CONFIG_INGESTER,
     CONFIG_LANGUAGE_PICKER_ENABLED,
     CONFIG_OPENAI_CLIENT,
-    CONFIG_QUERY_REWRITING_ENABLED,
-    CONFIG_REASONING_EFFORT_ENABLED,
-    CONFIG_SEARCH_CLIENT,
-    CONFIG_SEMANTIC_RANKER_DEPLOYED,
     CONFIG_SPEECH_INPUT_ENABLED,
     CONFIG_SPEECH_OUTPUT_AZURE_ENABLED,
     CONFIG_SPEECH_OUTPUT_BROWSER_ENABLED,
@@ -89,9 +77,8 @@ from config import (
     CONFIG_STREAMING_ENABLED,
     CONFIG_USER_BLOB_CONTAINER_CLIENT,
     CONFIG_USER_UPLOAD_ENABLED,
-    CONFIG_VECTOR_SEARCH_ENABLED,
 )
-from core.authentication import AuthenticationHelper, AuthError
+from core.authentication import AuthenticationHelper
 from core.mock_auth import MockAuthenticationHelper
 from core.sessionhelper import create_session_id
 from decorators import authenticated, authenticated_path
@@ -100,7 +87,6 @@ from prepdocs import (
     clean_key_if_exists,
     setup_embeddings_service,
     setup_file_processors,
-    setup_search_info,
 )
 from prepdocslib.filestrategy import UploadUserFileStrategy
 from prepdocslib.listfilestrategy import File
@@ -187,12 +173,8 @@ async def ask(auth_claims: dict[str, Any]):
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
-        use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
-        approach: Approach
-        if use_gpt4v and CONFIG_ASK_VISION_APPROACH in current_app.config:
-            approach = cast(Approach, current_app.config[CONFIG_ASK_VISION_APPROACH])
-        else:
-            approach = cast(Approach, current_app.config[CONFIG_ASK_APPROACH])
+        # Use the pure chat approach
+        approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
         r = await approach.run(
             request_json["messages"], context=context, session_state=request_json.get("session_state")
         )
@@ -226,20 +208,8 @@ async def chat(auth_claims: dict[str, Any]):
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
-        # Check if we should use the AssistantChatApproach for uploaded files
-        assistant_id = current_app.config.get("OPENAI_ASSISTANT_ID")
-        if assistant_id and "ASSISTANT_CHAT_APPROACH" in current_app.config:
-            # Use the custom approach for assistant-based chat
-            approach = current_app.config["ASSISTANT_CHAT_APPROACH"]
-            current_app.logger.info(f"Using AssistantChatApproach with assistant_id {assistant_id}")
-        else:
-            # Otherwise use the standard approach based on GPT4V flag
-            use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
-            approach: Approach
-            if use_gpt4v and CONFIG_CHAT_VISION_APPROACH in current_app.config:
-                approach = cast(Approach, current_app.config[CONFIG_CHAT_VISION_APPROACH])
-            else:
-                approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
+        # Use the pure chat approach
+        approach = current_app.config[CONFIG_CHAT_APPROACH]
 
         # If session state is provided, persists the session state,
         # else creates a new session_id depending on the chat history options enabled.
@@ -272,46 +242,28 @@ async def chat_stream(auth_claims: dict[str, Any]):
     context = request_json.get("context", {})
     context["auth_claims"] = auth_claims
     try:
-        # Check if we should use the AssistantChatApproach for uploaded files
-        assistant_id = current_app.config.get("OPENAI_ASSISTANT_ID")
-        if assistant_id and "ASSISTANT_CHAT_APPROACH" in current_app.config:
-            # The Assistant API doesn't support streaming directly yet
-            # Return a notice that streaming is not supported with the Assistant API
-            current_app.logger.info(f"Streaming not supported with AssistantChatApproach")
-            result = {
-                "message": {"role": "assistant", "content": "Streaming not supported with uploaded documents. Please use the regular chat endpoint."},
-                "context": {"data_points": [], "followup_questions": None}
-            }
-            response = await make_response(json.dumps(result) + "\n")
-            response.timeout = None  # type: ignore
-            response.mimetype = "application/json-lines"
-            return response
-        else:
-            # Otherwise use the standard approach based on GPT4V flag
-            use_gpt4v = context.get("overrides", {}).get("use_gpt4v", False)
-            approach: Approach
-            if use_gpt4v and CONFIG_CHAT_VISION_APPROACH in current_app.config:
-                approach = cast(Approach, current_app.config[CONFIG_CHAT_VISION_APPROACH])
-            else:
-                approach = cast(Approach, current_app.config[CONFIG_CHAT_APPROACH])
+        # Use the pure chat approach
+        approach = current_app.config[CONFIG_CHAT_APPROACH]
 
-            # If session state is provided, persists the session state,
-            # else creates a new session_id depending on the chat history options enabled.
-            session_state = request_json.get("session_state")
-            if session_state is None:
-                session_state = create_session_id(
-                    current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
-                    current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
-                )
-            result = await approach.run_stream(
-                request_json["messages"],
-                context=context,
-                session_state=session_state,
+        # If session state is provided, persists the session state,
+        # else creates a new session_id depending on the chat history options enabled.
+        session_state = request_json.get("session_state")
+        if session_state is None:
+            session_state = create_session_id(
+                current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
+                current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
             )
-            response = await make_response(format_as_ndjson(result))
-            response.timeout = None  # type: ignore
-            response.mimetype = "application/json-lines"
-            return response
+            
+        # Process the request for both new conversations and follow-ups
+        result = await approach.run_stream(
+            request_json["messages"],
+            context=context,
+            session_state=session_state,
+        )
+        response = await make_response(format_as_ndjson(result))
+        response.timeout = None  # type: ignore
+        response.mimetype = "application/json-lines"
+        return response
     except Exception as error:
         return error_response(error, "/chat")
 
@@ -327,21 +279,21 @@ def auth_setup():
 def config():
     return jsonify(
         {
-            "showGPT4VOptions": current_app.config[CONFIG_GPT4V_DEPLOYED],
-            "showSemanticRankerOption": current_app.config[CONFIG_SEMANTIC_RANKER_DEPLOYED],
-            "showQueryRewritingOption": current_app.config[CONFIG_QUERY_REWRITING_ENABLED],
-            "showReasoningEffortOption": current_app.config[CONFIG_REASONING_EFFORT_ENABLED],
+            "showGPT4VOptions": False,
+            "showSemanticRankerOption": False,
+            "showQueryRewritingOption": False,
+            "showReasoningEffortOption": False,
             "streamingEnabled": current_app.config[CONFIG_STREAMING_ENABLED],
-            "defaultReasoningEffort": current_app.config[CONFIG_DEFAULT_REASONING_EFFORT],
-            "showVectorOption": current_app.config[CONFIG_VECTOR_SEARCH_ENABLED],
-            "showUserUpload": current_app.config[CONFIG_USER_UPLOAD_ENABLED],
+            "defaultReasoningEffort": "",
+            "showVectorOption": False,
+            "showUserUpload": False,
             "showLanguagePicker": current_app.config[CONFIG_LANGUAGE_PICKER_ENABLED],
             "showSpeechInput": current_app.config[CONFIG_SPEECH_INPUT_ENABLED],
             "showSpeechOutputBrowser": current_app.config[CONFIG_SPEECH_OUTPUT_BROWSER_ENABLED],
             "showSpeechOutputAzure": current_app.config[CONFIG_SPEECH_OUTPUT_AZURE_ENABLED],
             "showChatHistoryBrowser": current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED],
             "showChatHistoryCosmos": current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED],
-            "showAgenticRetrievalOption": current_app.config[CONFIG_AGENTIC_RETRIEVAL_ENABLED],
+            "showAgenticRetrievalOption": False,
         }
     )
 
@@ -504,22 +456,11 @@ async def run_prepdocs(auth_claims: dict[str, Any]):
 
 @bp.post("/upload_no_auth")
 async def upload_no_auth():
-    """Upload endpoint that doesn't require authentication and uses OpenAI Assistants API through Azure"""
+    """Upload endpoint that doesn't require authentication and stores files for document Q&A"""
     try:
-        # Use the existing Azure OpenAI client
-        openai_client: AsyncOpenAI = current_app.config[CONFIG_OPENAI_CLIENT]
-        
-        # Check if we have Azure OpenAI configured
-        OPENAI_HOST = os.getenv("OPENAI_HOST", "")
-        if OPENAI_HOST and not OPENAI_HOST.startswith("azure"):
-            current_app.logger.warning(f"OPENAI_HOST is set to {OPENAI_HOST}, but we need Azure OpenAI for Assistants API")
-            return jsonify({
-                "message": "Azure OpenAI is not configured. Please set OPENAI_HOST to 'azure' in your environment variables.",
-                "status": "failed"
-            }), 500
-        
         # Log OpenAI configuration for debugging
         try:
+            openai_client: AsyncOpenAI = current_app.config[CONFIG_OPENAI_CLIENT]
             current_app.logger.info(f"OpenAI client type: {type(openai_client).__name__}")
             current_app.logger.info(f"OpenAI base URL: {openai_client.base_url}")
         except Exception as log_error:
@@ -541,105 +482,162 @@ async def upload_no_auth():
         # Reset file pointer
         file.seek(0)
         
-        # Create a temporary file that OpenAI can properly handle
-        # Create a temporary file with the proper name
+        # Create a temporary file for processing
         temp_file_path = ""
         with tempfile.NamedTemporaryFile(delete=False, suffix=os.path.splitext(file.filename)[1]) as temp_file:
             temp_file.write(file_content)
             temp_file_path = temp_file.name
         
-        file_id = None
-        assistant_id = None
-        
         try:
-            # Upload file to Azure OpenAI using the temporary file path
-            current_app.logger.info(f"Uploading file {file.filename} to Azure OpenAI")
-            try:
-                with open(temp_file_path, "rb") as file_to_upload:
-                    file_object = await openai_client.files.create(
-                        file=file_to_upload,
-                        purpose="assistants"
-                    )
-                file_id = file_object.id
-                current_app.logger.info(f"File uploaded to Azure OpenAI with ID: {file_id}")
-            except Exception as api_error:
-                current_app.logger.exception(f"Azure OpenAI API error during file upload: {str(api_error)}")
-                return jsonify({
-                    "message": f"Error uploading file to Azure OpenAI: {str(api_error)}. Please ensure your Azure OpenAI service has the Assistants API enabled.", 
-                    "status": "failed"
-                }), 500
+            # Extract text from the file based on file type
+            file_extension = os.path.splitext(file.filename)[1].lower()
+            extracted_text = ""
             
-            # Create or get the existing assistant
-            # Check if we have an assistant ID stored
-            assistant_id = current_app.config.get("OPENAI_ASSISTANT_ID")
-            
-            if not assistant_id:
-                # Create a new assistant if we don't have one
-                current_app.logger.info("Creating new Azure OpenAI Assistant")
+            # Process different file types
+            if file_extension in [".txt", ".md"]:
+                # For text files, just read the content
+                with open(temp_file_path, "r", encoding="utf-8", errors="ignore") as f:
+                    extracted_text = f.read()
+            elif file_extension == ".pdf":
+                # For PDFs, use PyPDF2 or similar library
                 try:
-                    # Get the model deployment name from env variables
-                    deployment_name = os.getenv("AZURE_OPENAI_CHATGPT_DEPLOYMENT")
-                    if not deployment_name:
-                        current_app.logger.warning("AZURE_OPENAI_CHATGPT_DEPLOYMENT not set, using gpt-4-turbo")
-                        deployment_name = "gpt-4-turbo"
-                    
-                    assistant = await openai_client.beta.assistants.create(
-                        name="Document Assistant",
-                        instructions="You are a helpful assistant that can answer questions about uploaded documents.",
-                        tools=[{"type": "retrieval"}],
-                        model=deployment_name
-                    )
-                    assistant_id = assistant.id
-                    current_app.logger.info(f"Created new Azure OpenAI Assistant with ID: {assistant_id}")
-                    # Store the assistant ID in the app config
-                    current_app.config["OPENAI_ASSISTANT_ID"] = assistant_id
-                except Exception as assistant_error:
-                    current_app.logger.exception(f"Error creating Azure OpenAI Assistant: {str(assistant_error)}")
-                    return jsonify({
-                        "message": f"Error creating Azure OpenAI Assistant: {str(assistant_error)}. Please check your Azure OpenAI configuration.", 
-                        "status": "failed"
-                    }), 500
+                    import PyPDF2
+                    with open(temp_file_path, "rb") as f:
+                        pdf_reader = PyPDF2.PdfReader(f)
+                        for page_num in range(len(pdf_reader.pages)):
+                            page = pdf_reader.pages[page_num]
+                            extracted_text += page.extract_text() + "\n\n"
+                except ImportError:
+                    current_app.logger.warning("PyPDF2 not installed, using basic text extraction")
+                    extracted_text = f"[PDF content from {file.filename}] - Install PyPDF2 for better extraction"
+            elif file_extension in [".docx"]:
+                # For Word documents
+                try:
+                    import docx
+                    doc = docx.Document(temp_file_path)
+                    extracted_text = "\n".join([paragraph.text for paragraph in doc.paragraphs])
+                except ImportError:
+                    current_app.logger.warning("python-docx not installed, using basic text extraction")
+                    extracted_text = f"[DOCX content from {file.filename}] - Install python-docx for better extraction"
             else:
-                current_app.logger.info(f"Using existing Azure OpenAI Assistant with ID: {assistant_id}")
+                # For other file types, just note the file was uploaded
+                extracted_text = f"[Content from {file.filename} - file type {file_extension} not directly supported for text extraction]"
             
-            # Attach the file to the assistant
-            current_app.logger.info(f"Attaching file {file_id} to assistant {assistant_id}")
-            try:
-                await openai_client.beta.assistants.files.create(
-                    assistant_id=assistant_id,
-                    file_id=file_id
-                )
-            except Exception as attach_error:
-                current_app.logger.exception(f"Error attaching file to Azure OpenAI Assistant: {str(attach_error)}")
-                return jsonify({
-                    "message": f"Error attaching file to Azure OpenAI Assistant: {str(attach_error)}", 
-                    "status": "failed"
-                }), 500
+            # Generate a unique file ID
+            file_id = str(uuid.uuid4())
+            
+            # Save the extracted text and metadata
+            # Fix: Use the same data directory path as in PureChatApproach
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data")
+            os.makedirs(data_dir, exist_ok=True)
+            print(f"Saving uploaded file to data directory: {data_dir}")
+            
+            # Save the original file
+            file_path = os.path.join(data_dir, file.filename)
+            current_app.logger.info(f"Saving original file to: {file_path}")
+            with open(file_path, "wb") as f:
+                f.write(file_content)
+            
+            # Save the extracted text
+            text_file_path = os.path.join(data_dir, f"{file_id}.txt")
+            with open(text_file_path, "w", encoding="utf-8") as f:
+                f.write(extracted_text)
+            
+            # Save metadata about the file
+            metadata = {
+                "file_id": file_id,
+                "filename": file.filename,
+                "upload_time": datetime.datetime.now().isoformat(),
+                "size": file_size,
+                "text_path": text_file_path
+            }
+            
+            # Store metadata in a JSON file
+            metadata_path = os.path.join(data_dir, f"{file_id}.json")
+            with open(metadata_path, "w") as f:
+                json.dump(metadata, f)
+            
+            # Store the file ID in the app config for later use
+            # If we don't have a list of uploaded files yet, create one
+            if "UPLOADED_FILES" not in current_app.config:
+                current_app.config["UPLOADED_FILES"] = []
+            
+            # Add this file to the list
+            current_app.config["UPLOADED_FILES"].append(metadata)
+            current_app.logger.info(f"Added file {file.filename} with ID {file_id} to uploaded files list")
+            
+            # Skip blob storage upload - we only need the local files for chat
+            current_app.logger.info(f"File saved locally, skipping blob storage upload")
+            
+            return jsonify({
+                "message": f"File {file.filename} uploaded successfully", 
+                "status": "success",
+                "file_id": file_id,
+                "extracted_text_length": len(extracted_text)
+            }), 200
+                
+        except Exception as process_error:
+            current_app.logger.exception(f"Error processing file: {str(process_error)}")
+            return jsonify({
+                "message": f"Error processing file: {str(process_error)}", 
+                "status": "failed"
+            }), 500
         finally:
             # Clean up the temporary file
             if temp_file_path and os.path.exists(temp_file_path):
                 os.unlink(temp_file_path)
-        
-        # Save the file locally too so we have a copy
-        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
-        os.makedirs(data_dir, exist_ok=True)
-        file_path = os.path.join(data_dir, file.filename)
-        current_app.logger.info(f"Saving local copy to: {file_path}")
-        
-        with open(file_path, "wb") as f:
-            f.write(file_content)
-            
-        return jsonify({
-            "message": f"File {file.filename} uploaded to Azure OpenAI Assistant successfully", 
-            "status": "success",
-            "file_id": file_id,
-            "assistant_id": assistant_id
-        }), 200
             
     except Exception as e:
         current_app.logger.exception(f"Exception in upload_no_auth: {str(e)}")
         return jsonify({"message": f"Error uploading file: {str(e)}", "status": "failed"}), 500
 
+
+@bp.before_app_serving
+async def load_existing_documents():
+    """Load existing documents from the data directory"""
+    try:
+        # Define the data directory path
+        data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
+        
+        # Check if the directory exists
+        if not os.path.exists(data_dir):
+            current_app.logger.info(f"Data directory {data_dir} does not exist, creating it")
+            os.makedirs(data_dir, exist_ok=True)
+            return
+        
+        # Look for JSON metadata files
+        current_app.logger.info(f"Scanning data directory {data_dir} for document metadata")
+        metadata_files = [f for f in os.listdir(data_dir) if f.endswith(".json") and not f.startswith(".")]
+        
+        if not metadata_files:
+            current_app.logger.info("No document metadata files found in data directory")
+            return
+        
+        # Initialize the uploaded files list if it doesn't exist
+        if "UPLOADED_FILES" not in current_app.config:
+            current_app.config["UPLOADED_FILES"] = []
+        
+        # Load metadata from each file
+        for metadata_file in metadata_files:
+            try:
+                metadata_path = os.path.join(data_dir, metadata_file)
+                with open(metadata_path, "r") as f:
+                    metadata = json.load(f)
+                
+                # Check if the text file exists
+                text_path = metadata.get("text_path")
+                if text_path and os.path.exists(text_path):
+                    # Add to the uploaded files list if not already there
+                    file_id = metadata.get("file_id")
+                    if file_id and not any(f.get("file_id") == file_id for f in current_app.config["UPLOADED_FILES"]):
+                        current_app.config["UPLOADED_FILES"].append(metadata)
+                        current_app.logger.info(f"Loaded document metadata for {metadata.get('filename')} (ID: {file_id})")
+            except Exception as e:
+                current_app.logger.error(f"Error loading document metadata from {metadata_file}: {str(e)}")
+        
+        current_app.logger.info(f"Loaded {len(current_app.config['UPLOADED_FILES'])} documents from data directory")
+    except Exception as e:
+        current_app.logger.error(f"Error loading existing documents: {str(e)}")
 
 @bp.before_app_serving
 async def setup_clients():
@@ -648,18 +646,11 @@ async def setup_clients():
     AZURE_STORAGE_CONTAINER = os.environ["AZURE_STORAGE_CONTAINER"]
     AZURE_USERSTORAGE_ACCOUNT = os.environ.get("AZURE_USERSTORAGE_ACCOUNT")
     AZURE_USERSTORAGE_CONTAINER = os.environ.get("AZURE_USERSTORAGE_CONTAINER")
-    AZURE_SEARCH_SERVICE = os.environ["AZURE_SEARCH_SERVICE"]
-    AZURE_SEARCH_ENDPOINT = f"https://{AZURE_SEARCH_SERVICE}.search.windows.net"
-    AZURE_SEARCH_INDEX = os.environ["AZURE_SEARCH_INDEX"]
-    AZURE_SEARCH_AGENT = os.getenv("AZURE_SEARCH_AGENT", "")
     # Shared by all OpenAI deployments
     OPENAI_HOST = os.getenv("OPENAI_HOST", "azure")
     OPENAI_CHATGPT_MODEL = os.environ["AZURE_OPENAI_CHATGPT_MODEL"]
-    AZURE_OPENAI_SEARCHAGENT_MODEL = os.getenv("AZURE_OPENAI_SEARCHAGENT_MODEL")
-    AZURE_OPENAI_SEARCHAGENT_DEPLOYMENT = os.getenv("AZURE_OPENAI_SEARCHAGENT_DEPLOYMENT")
     OPENAI_EMB_MODEL = os.getenv("AZURE_OPENAI_EMB_MODEL_NAME", "text-embedding-ada-002")
     OPENAI_EMB_DIMENSIONS = int(os.getenv("AZURE_OPENAI_EMB_DIMENSIONS") or 1536)
-    OPENAI_REASONING_EFFORT = os.getenv("AZURE_OPENAI_REASONING_EFFORT")
     # Used with Azure OpenAI deployments
     AZURE_OPENAI_SERVICE = os.getenv("AZURE_OPENAI_SERVICE")
     AZURE_OPENAI_GPT4V_DEPLOYMENT = os.environ.get("AZURE_OPENAI_GPT4V_DEPLOYMENT")
@@ -670,8 +661,8 @@ async def setup_clients():
     AZURE_OPENAI_EMB_DEPLOYMENT = os.getenv("AZURE_OPENAI_EMB_DEPLOYMENT") if OPENAI_HOST.startswith("azure") else None
     AZURE_OPENAI_CUSTOM_URL = os.getenv("AZURE_OPENAI_CUSTOM_URL")
     # https://learn.microsoft.com/azure/ai-services/openai/api-version-deprecation#latest-ga-api-release
-    AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION") or "2024-10-21"
-    AZURE_VISION_ENDPOINT = os.getenv("AZURE_VISION_ENDPOINT", "")
+    # Use a version known to support Assistants API
+    AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION") or "2024-02-15-preview"
     # Used only with non-Azure OpenAI deployments
     OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
     OPENAI_ORGANIZATION = os.getenv("OPENAI_ORGANIZATION")
@@ -689,13 +680,6 @@ async def setup_clients():
     KB_FIELDS_CONTENT = os.getenv("KB_FIELDS_CONTENT", "content")
     KB_FIELDS_SOURCEPAGE = os.getenv("KB_FIELDS_SOURCEPAGE", "sourcepage")
 
-    AZURE_SEARCH_QUERY_LANGUAGE = os.getenv("AZURE_SEARCH_QUERY_LANGUAGE") or "en-us"
-    AZURE_SEARCH_QUERY_SPELLER = os.getenv("AZURE_SEARCH_QUERY_SPELLER") or "lexicon"
-    AZURE_SEARCH_SEMANTIC_RANKER = os.getenv("AZURE_SEARCH_SEMANTIC_RANKER", "free").lower()
-    AZURE_SEARCH_QUERY_REWRITING = os.getenv("AZURE_SEARCH_QUERY_REWRITING", "false").lower()
-    # This defaults to the previous field name "embedding", for backwards compatibility
-    AZURE_SEARCH_FIELD_NAME_EMBEDDING = os.getenv("AZURE_SEARCH_FIELD_NAME_EMBEDDING", "embedding")
-
     AZURE_SPEECH_SERVICE_ID = os.getenv("AZURE_SPEECH_SERVICE_ID")
     AZURE_SPEECH_SERVICE_LOCATION = os.getenv("AZURE_SPEECH_SERVICE_LOCATION")
     AZURE_SPEECH_SERVICE_VOICE = os.getenv("AZURE_SPEECH_SERVICE_VOICE") or "en-US-AndrewMultilingualNeural"
@@ -709,19 +693,19 @@ async def setup_clients():
     USE_CHAT_HISTORY_BROWSER = os.getenv("USE_CHAT_HISTORY_BROWSER", "").lower() == "true"
     USE_CHAT_HISTORY_COSMOS = os.getenv("USE_CHAT_HISTORY_COSMOS", "").lower() == "true"
     USE_AGENTIC_RETRIEVAL = os.getenv("USE_AGENTIC_RETRIEVAL", "").lower() == "true"
+    USE_STREAMING = os.getenv("USE_STREAMING", "true").lower() == "true"
 
     # WEBSITE_HOSTNAME is always set by App Service, RUNNING_IN_PRODUCTION is set in main.bicep
     RUNNING_ON_AZURE = os.getenv("WEBSITE_HOSTNAME") is not None or os.getenv("RUNNING_IN_PRODUCTION") is not None
 
-    # Use the current user identity for keyless authentication to Azure services.
-    # This assumes you use 'azd auth login' locally, and managed identity when deployed on Azure.
-    # The managed identity is setup in the infra/ folder.
-    azure_credential: Union[AzureDeveloperCliCredential, ManagedIdentityCredential]
+    # Use the appropriate authentication method based on available credentials
+    # Priority: 1. Service Principal (if credentials provided) 2. DefaultAzureCredential 3. ManagedIdentity (on Azure)
+    AZURE_CLIENT_SECRET = os.getenv("AZURE_CLIENT_SECRET")
+    AZURE_CLIENT_ID = os.getenv("AZURE_CLIENT_ID")
+    
     if RUNNING_ON_AZURE:
         current_app.logger.info("Setting up Azure credential using ManagedIdentityCredential")
-        if AZURE_CLIENT_ID := os.getenv("AZURE_CLIENT_ID"):
-            # ManagedIdentityCredential should use AZURE_CLIENT_ID if set in env, but its not working for some reason,
-            # so we explicitly pass it in as the client ID here. This is necessary for user-assigned managed identities.
+        if AZURE_CLIENT_ID:
             current_app.logger.info(
                 "Setting up Azure credential using ManagedIdentityCredential with client_id %s", AZURE_CLIENT_ID
             )
@@ -729,44 +713,51 @@ async def setup_clients():
         else:
             current_app.logger.info("Setting up Azure credential using ManagedIdentityCredential")
             azure_credential = ManagedIdentityCredential()
-    elif AZURE_TENANT_ID:
+    elif AZURE_CLIENT_ID and AZURE_CLIENT_SECRET and AZURE_TENANT_ID:
         current_app.logger.info(
-            "Setting up Azure credential using AzureDeveloperCliCredential with tenant_id %s", AZURE_TENANT_ID
+            "Setting up Azure credential using ClientSecretCredential with client_id %s", AZURE_CLIENT_ID
         )
-        azure_credential = AzureDeveloperCliCredential(tenant_id=AZURE_TENANT_ID, process_timeout=60)
+        azure_credential = ClientSecretCredential(
+            tenant_id=AZURE_TENANT_ID,
+            client_id=AZURE_CLIENT_ID,
+            client_secret=AZURE_CLIENT_SECRET
+        )
     else:
-        current_app.logger.info("Setting up Azure credential using AzureDeveloperCliCredential for home tenant")
-        azure_credential = AzureDeveloperCliCredential(process_timeout=60)
+        current_app.logger.info("Setting up Azure credential using DefaultAzureCredential")
+        # DefaultAzureCredential tries multiple authentication methods including environment variables
+        azure_credential = DefaultAzureCredential()
 
     # Set the Azure credential in the app config for use in other parts of the app
     current_app.config[CONFIG_CREDENTIAL] = azure_credential
 
-    # Set up clients for AI Search and Storage
-    search_client = SearchClient(
-        endpoint=AZURE_SEARCH_ENDPOINT,
-        index_name=AZURE_SEARCH_INDEX,
-        credential=azure_credential,
-    )
-    agent_client = KnowledgeAgentRetrievalClient(
-        endpoint=AZURE_SEARCH_ENDPOINT, agent_name=AZURE_SEARCH_AGENT, credential=azure_credential
-    )
+    # Print out endpoint values for debugging
+    current_app.logger.info("============ DEBUG INFORMATION ============")
+    current_app.logger.info(f"AZURE_OPENAI_SERVICE: {AZURE_OPENAI_SERVICE}")
+    current_app.logger.info(f"OPENAI_HOST: {OPENAI_HOST}")
+    current_app.logger.info(f"AZURE_OPENAI_CHATGPT_DEPLOYMENT: {AZURE_OPENAI_CHATGPT_DEPLOYMENT}")
+    current_app.logger.info(f"AZURE_OPENAI_EMB_DEPLOYMENT: {AZURE_OPENAI_EMB_DEPLOYMENT}")
+    current_app.logger.info(f"AZURE_OPENAI_API_VERSION: {AZURE_OPENAI_API_VERSION}")
+    current_app.logger.info("=============================================")
+    
+    # Set up OpenAI client
+    current_app.logger.info("Setting up OpenAI client for pure chat approach")
+    
 
-    blob_container_client = ContainerClient(
-        f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net", AZURE_STORAGE_CONTAINER, credential=azure_credential
-    )
-
-    # Set up authentication helper
-    search_index = None
-    if AZURE_USE_AUTHENTICATION:
-        current_app.logger.info("AZURE_USE_AUTHENTICATION is true, setting up search index client")
-        search_index_client = SearchIndexClient(
-            endpoint=AZURE_SEARCH_ENDPOINT,
-            credential=azure_credential,
+    # Print storage account info for debugging
+    storage_url = f"https://{AZURE_STORAGE_ACCOUNT}.blob.core.windows.net"
+    current_app.logger.info(f"Storage URL: {storage_url}")
+    current_app.logger.info(f"Storage container: {AZURE_STORAGE_CONTAINER}")
+    
+    try:
+        blob_container_client = ContainerClient(
+            storage_url, AZURE_STORAGE_CONTAINER, credential=azure_credential
         )
-        search_index = await search_index_client.get_index(AZURE_SEARCH_INDEX)
-        await search_index_client.close()
+        current_app.logger.info("Successfully created blob_container_client")
+    except Exception as e:
+        current_app.logger.error(f"Error creating blob_container_client: {str(e)}")
+        raise
+
     auth_helper = AuthenticationHelper(
-        search_index=search_index,
         use_authentication=AZURE_USE_AUTHENTICATION,
         server_app_id=AZURE_SERVER_APP_ID,
         server_app_secret=AZURE_SERVER_APP_SECRET,
@@ -798,9 +789,6 @@ async def setup_clients():
             local_html_parser=os.getenv("USE_LOCAL_HTML_PARSER", "").lower() == "true",
             search_images=USE_GPT4V,
         )
-        search_info = await setup_search_info(
-            search_service=AZURE_SEARCH_SERVICE, index_name=AZURE_SEARCH_INDEX, azure_credential=azure_credential
-        )
         text_embeddings_service = setup_embeddings_service(
             azure_credential=azure_credential,
             openai_host=OPENAI_HOST,
@@ -815,10 +803,8 @@ async def setup_clients():
             disable_vectors=os.getenv("USE_VECTORS", "").lower() == "false",
         )
         ingester = UploadUserFileStrategy(
-            search_info=search_info,
             embeddings=text_embeddings_service,
             file_processors=file_processors,
-            search_field_name_embedding=AZURE_SEARCH_FIELD_NAME_EMBEDDING,
         )
         current_app.config[CONFIG_INGESTER] = ingester
 
@@ -847,20 +833,54 @@ async def setup_clients():
             current_app.logger.info("OPENAI_HOST is azure, setting up Azure OpenAI client")
             if not AZURE_OPENAI_SERVICE:
                 raise ValueError("AZURE_OPENAI_SERVICE must be set when OPENAI_HOST is azure")
-            endpoint = f"https://{AZURE_OPENAI_SERVICE}.openai.azure.com"
-        if api_key := os.getenv("AZURE_OPENAI_API_KEY_OVERRIDE"):
-            current_app.logger.info("AZURE_OPENAI_API_KEY_OVERRIDE found, using as api_key for Azure OpenAI client")
-            openai_client = AsyncAzureOpenAI(
-                api_version=AZURE_OPENAI_API_VERSION, azure_endpoint=endpoint, api_key=api_key
-            )
+            
+            # Clean up the service name to ensure it doesn't have any extra parts
+            service_name = AZURE_OPENAI_SERVICE.strip()
+            # Remove any trailing slashes
+            service_name = service_name.rstrip("/")
+            
+            current_app.logger.info(f"Cleaned service name: {service_name}")
+            endpoint = f"https://{service_name}.openai.azure.com"
+            current_app.logger.info(f"Azure OpenAI endpoint: {endpoint}")
+            # Try to resolve the hostname to check connectivity
+            try:
+                import socket
+                hostname = endpoint.replace("https://", "").split(":")[0]
+                current_app.logger.info(f"Attempting to resolve hostname: {hostname}")
+                ip_address = socket.gethostbyname(hostname)
+                current_app.logger.info(f"Successfully resolved {hostname} to {ip_address}")
+            except Exception as e:
+                current_app.logger.error(f"Failed to resolve hostname {hostname}: {str(e)}")
+        
+        # First try to use API key from .env if available
+        api_key = os.getenv("AZURE_OPENAI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY_OVERRIDE")
+        if api_key:
+            current_app.logger.info("Using API key for Azure OpenAI client")
+            current_app.logger.info(f"API key length: {len(api_key)} characters")
+            try:
+                endpoint = endpoint.rstrip("/")
+                if not endpoint.endswith("/openai/v1"):
+                    endpoint = f"{endpoint}/openai/v1"
+                openai_client = AsyncAzureOpenAI(
+                    api_version=AZURE_OPENAI_API_VERSION, azure_endpoint=endpoint, api_key=api_key
+                )
+                current_app.logger.info("Successfully created OpenAI client with API key")
+            except Exception as e:
+                current_app.logger.error(f"Error creating OpenAI client with API key: {str(e)}")
+                raise
         else:
+            # Fall back to token-based authentication if no API key is available
             current_app.logger.info("Using Azure credential (passwordless authentication) for Azure OpenAI client")
-            token_provider = get_bearer_token_provider(azure_credential, "https://cognitiveservices.azure.com/.default")
-            openai_client = AsyncAzureOpenAI(
-                api_version=AZURE_OPENAI_API_VERSION,
-                azure_endpoint=endpoint,
-                azure_ad_token_provider=token_provider,
-            )
+            try:
+                token_provider = get_bearer_token_provider(azure_credential, "https://cognitiveservices.azure.com/.default")
+                openai_client = AsyncAzureOpenAI(
+                    api_version=AZURE_OPENAI_API_VERSION,
+                    azure_endpoint=endpoint,
+                    azure_ad_token_provider=token_provider,
+                )
+            except Exception as e:
+                current_app.logger.error(f"Error setting up token provider: {str(e)}")
+                raise ValueError("Failed to set up Azure OpenAI client. Please provide AZURE_OPENAI_API_KEY in your .env file.")
     elif OPENAI_HOST == "local":
         current_app.logger.info("OPENAI_HOST is local, setting up local OpenAI client for OPENAI_BASE_URL with no key")
         openai_client = AsyncOpenAI(
@@ -877,142 +897,80 @@ async def setup_clients():
         )
 
     current_app.config[CONFIG_OPENAI_CLIENT] = openai_client
-    current_app.config[CONFIG_SEARCH_CLIENT] = search_client
-    current_app.config[CONFIG_AGENT_CLIENT] = agent_client
+    # Removed CONFIG_AGENT_CLIENT reference as part of Azure Search removal
     current_app.config[CONFIG_BLOB_CONTAINER_CLIENT] = blob_container_client
     current_app.config[CONFIG_AUTH_CLIENT] = auth_helper
 
     current_app.config[CONFIG_GPT4V_DEPLOYED] = bool(USE_GPT4V)
-    current_app.config[CONFIG_SEMANTIC_RANKER_DEPLOYED] = AZURE_SEARCH_SEMANTIC_RANKER != "disabled"
-    current_app.config[CONFIG_QUERY_REWRITING_ENABLED] = (
-        AZURE_SEARCH_QUERY_REWRITING == "true" and AZURE_SEARCH_SEMANTIC_RANKER != "disabled"
-    )
-    current_app.config[CONFIG_DEFAULT_REASONING_EFFORT] = OPENAI_REASONING_EFFORT
-    current_app.config[CONFIG_REASONING_EFFORT_ENABLED] = OPENAI_CHATGPT_MODEL in Approach.GPT_REASONING_MODELS
-    current_app.config[CONFIG_STREAMING_ENABLED] = (
-        bool(USE_GPT4V)
-        or OPENAI_CHATGPT_MODEL not in Approach.GPT_REASONING_MODELS
-        or Approach.GPT_REASONING_MODELS[OPENAI_CHATGPT_MODEL].streaming
-    )
-    current_app.config[CONFIG_VECTOR_SEARCH_ENABLED] = os.getenv("USE_VECTORS", "").lower() != "false"
-    current_app.config[CONFIG_USER_UPLOAD_ENABLED] = bool(USE_USER_UPLOAD)
+    current_app.config[CONFIG_STREAMING_ENABLED] = USE_STREAMING
     current_app.config[CONFIG_LANGUAGE_PICKER_ENABLED] = ENABLE_LANGUAGE_PICKER
     current_app.config[CONFIG_SPEECH_INPUT_ENABLED] = USE_SPEECH_INPUT_BROWSER
     current_app.config[CONFIG_SPEECH_OUTPUT_BROWSER_ENABLED] = USE_SPEECH_OUTPUT_BROWSER
     current_app.config[CONFIG_SPEECH_OUTPUT_AZURE_ENABLED] = USE_SPEECH_OUTPUT_AZURE
     current_app.config[CONFIG_CHAT_HISTORY_BROWSER_ENABLED] = USE_CHAT_HISTORY_BROWSER
     current_app.config[CONFIG_CHAT_HISTORY_COSMOS_ENABLED] = USE_CHAT_HISTORY_COSMOS
-    current_app.config[CONFIG_AGENTIC_RETRIEVAL_ENABLED] = USE_AGENTIC_RETRIEVAL
+    # Removed CONFIG_AGENTIC_RETRIEVAL_ENABLED reference as part of Azure Search removal
+    # Set up the approach objects
+    if OPENAI_HOST.startswith("azure"):
+        # Use the Azure OpenAI API
+        if AZURE_OPENAI_CUSTOM_URL:
+            base_url = AZURE_OPENAI_CUSTOM_URL
+        else:
+            base_url = f"https://{AZURE_OPENAI_SERVICE}.openai.azure.com"
 
-    prompt_manager = PromptyManager()
+        # Set up OpenAI client
+        openai_client = AsyncAzureOpenAI(
+            api_key=os.getenv("AZURE_OPENAI_API_KEY", ""),
+            api_version=AZURE_OPENAI_API_VERSION,
+            azure_endpoint=base_url,
+            default_headers={"x-ms-useragent": "AzureSearchDemo/1.0.0"},
+        )
+    else:
+        # Use the non-Azure OpenAI API
+        openai_client = AsyncOpenAI(
+            api_key=OPENAI_API_KEY,
+            organization=OPENAI_ORGANIZATION,
+            default_headers={"x-ms-useragent": "AzureSearchDemo/1.0.0"},
+        )
 
-    # Set up the two default RAG approaches for /ask and /chat
-    # RetrieveThenReadApproach is used by /ask for single-turn Q&A
-    current_app.config[CONFIG_ASK_APPROACH] = RetrieveThenReadApproach(
-        search_client=search_client,
-        search_index_name=AZURE_SEARCH_INDEX,
-        agent_model=AZURE_OPENAI_SEARCHAGENT_MODEL,
-        agent_deployment=AZURE_OPENAI_SEARCHAGENT_DEPLOYMENT,
-        agent_client=agent_client,
-        openai_client=openai_client,
-        auth_helper=auth_helper,
-        chatgpt_model=OPENAI_CHATGPT_MODEL,
-        chatgpt_deployment=AZURE_OPENAI_CHATGPT_DEPLOYMENT,
-        embedding_model=OPENAI_EMB_MODEL,
-        embedding_deployment=AZURE_OPENAI_EMB_DEPLOYMENT,
-        embedding_dimensions=OPENAI_EMB_DIMENSIONS,
-        embedding_field=AZURE_SEARCH_FIELD_NAME_EMBEDDING,
-        sourcepage_field=KB_FIELDS_SOURCEPAGE,
-        content_field=KB_FIELDS_CONTENT,
-        query_language=AZURE_SEARCH_QUERY_LANGUAGE,
-        query_speller=AZURE_SEARCH_QUERY_SPELLER,
-        prompt_manager=prompt_manager,
-        reasoning_effort=OPENAI_REASONING_EFFORT,
-    )
+    # Set up prompt manager
+    prompt_manager = PromptManager()
 
-    # ChatReadRetrieveReadApproach is used by /chat for multi-turn conversation
-    current_app.config[CONFIG_CHAT_APPROACH] = ChatReadRetrieveReadApproach(
-        search_client=search_client,
-        search_index_name=AZURE_SEARCH_INDEX,
-        agent_model=AZURE_OPENAI_SEARCHAGENT_MODEL,
-        agent_deployment=AZURE_OPENAI_SEARCHAGENT_DEPLOYMENT,
-        agent_client=agent_client,
-        openai_client=openai_client,
-        auth_helper=auth_helper,
-        chatgpt_model=OPENAI_CHATGPT_MODEL,
-        chatgpt_deployment=AZURE_OPENAI_CHATGPT_DEPLOYMENT,
-        embedding_model=OPENAI_EMB_MODEL,
-        embedding_deployment=AZURE_OPENAI_EMB_DEPLOYMENT,
-        embedding_dimensions=OPENAI_EMB_DIMENSIONS,
-        embedding_field=AZURE_SEARCH_FIELD_NAME_EMBEDDING,
-        sourcepage_field=KB_FIELDS_SOURCEPAGE,
-        content_field=KB_FIELDS_CONTENT,
-        query_language=AZURE_SEARCH_QUERY_LANGUAGE,
-        query_speller=AZURE_SEARCH_QUERY_SPELLER,
-        prompt_manager=prompt_manager,
-        reasoning_effort=OPENAI_REASONING_EFFORT,
-    )
-
-    if USE_GPT4V:
-        current_app.logger.info("USE_GPT4V is true, setting up GPT4V approach")
-        if not AZURE_OPENAI_GPT4V_MODEL:
-            raise ValueError("AZURE_OPENAI_GPT4V_MODEL must be set when USE_GPT4V is true")
-        if any(
-            model in Approach.GPT_REASONING_MODELS
-            for model in [
-                OPENAI_CHATGPT_MODEL,
-                AZURE_OPENAI_GPT4V_MODEL,
-                AZURE_OPENAI_CHATGPT_DEPLOYMENT,
-                AZURE_OPENAI_GPT4V_DEPLOYMENT,
-            ]
-        ):
-            raise ValueError(
-                "AZURE_OPENAI_CHATGPT_MODEL and AZURE_OPENAI_GPT4V_MODEL must not be a reasoning model when USE_GPT4V is true"
+    # Set up the authentication helper
+    if AZURE_USE_AUTHENTICATION:
+        if AZURE_SERVER_APP_ID and AZURE_SERVER_APP_SECRET and AZURE_CLIENT_APP_ID and AZURE_AUTH_TENANT_ID:
+            current_app.logger.info("Using AAD auth with client credential flow")
+            auth_helper = AuthenticationHelper(
+                server_app_id=AZURE_SERVER_APP_ID,
+                server_app_secret=AZURE_SERVER_APP_SECRET,
+                client_app_id=AZURE_CLIENT_APP_ID,
+                tenant_id=AZURE_AUTH_TENANT_ID,
+                enable_global_document_access=AZURE_ENABLE_GLOBAL_DOCUMENT_ACCESS,
+                enable_unauthenticated_access=AZURE_ENABLE_UNAUTHENTICATED_ACCESS,
             )
+        else:
+            current_app.logger.info("Using AAD auth with on-behalf-of flow")
+            auth_helper = AuthenticationHelper(
+                enable_global_document_access=AZURE_ENABLE_GLOBAL_DOCUMENT_ACCESS,
+                enable_unauthenticated_access=AZURE_ENABLE_UNAUTHENTICATED_ACCESS,
+            )
+    else:
+        current_app.logger.info("Using mock auth")
+        auth_helper = MockAuthenticationHelper()
 
-        token_provider = get_bearer_token_provider(azure_credential, "https://cognitiveservices.azure.com/.default")
+    # Set up the pure chat approach
+    current_app.logger.info("Initializing PureChatApproach")
+    current_app.config[CONFIG_CHAT_APPROACH] = PureChatApproach(
+        openai_client=openai_client,
+        chatgpt_model=OPENAI_CHATGPT_MODEL,
+        chatgpt_deployment=AZURE_OPENAI_CHATGPT_DEPLOYMENT,
+    )
+    
+    # Use the same approach for ask endpoint
+    current_app.config[CONFIG_ASK_APPROACH] = current_app.config[CONFIG_CHAT_APPROACH]
 
-        current_app.config[CONFIG_ASK_VISION_APPROACH] = RetrieveThenReadVisionApproach(
-            search_client=search_client,
-            openai_client=openai_client,
-            blob_container_client=blob_container_client,
-            auth_helper=auth_helper,
-            vision_endpoint=AZURE_VISION_ENDPOINT,
-            vision_token_provider=token_provider,
-            gpt4v_deployment=AZURE_OPENAI_GPT4V_DEPLOYMENT,
-            gpt4v_model=AZURE_OPENAI_GPT4V_MODEL,
-            embedding_model=OPENAI_EMB_MODEL,
-            embedding_deployment=AZURE_OPENAI_EMB_DEPLOYMENT,
-            embedding_dimensions=OPENAI_EMB_DIMENSIONS,
-            embedding_field=AZURE_SEARCH_FIELD_NAME_EMBEDDING,
-            sourcepage_field=KB_FIELDS_SOURCEPAGE,
-            content_field=KB_FIELDS_CONTENT,
-            query_language=AZURE_SEARCH_QUERY_LANGUAGE,
-            query_speller=AZURE_SEARCH_QUERY_SPELLER,
-            prompt_manager=prompt_manager,
-        )
-
-        current_app.config[CONFIG_CHAT_VISION_APPROACH] = ChatReadRetrieveReadVisionApproach(
-            search_client=search_client,
-            openai_client=openai_client,
-            blob_container_client=blob_container_client,
-            auth_helper=auth_helper,
-            vision_endpoint=AZURE_VISION_ENDPOINT,
-            vision_token_provider=token_provider,
-            chatgpt_model=OPENAI_CHATGPT_MODEL,
-            chatgpt_deployment=AZURE_OPENAI_CHATGPT_DEPLOYMENT,
-            gpt4v_deployment=AZURE_OPENAI_GPT4V_DEPLOYMENT,
-            gpt4v_model=AZURE_OPENAI_GPT4V_MODEL,
-            embedding_model=OPENAI_EMB_MODEL,
-            embedding_deployment=AZURE_OPENAI_EMB_DEPLOYMENT,
-            embedding_dimensions=OPENAI_EMB_DIMENSIONS,
-            embedding_field=AZURE_SEARCH_FIELD_NAME_EMBEDDING,
-            sourcepage_field=KB_FIELDS_SOURCEPAGE,
-            content_field=KB_FIELDS_CONTENT,
-            query_language=AZURE_SEARCH_QUERY_LANGUAGE,
-            query_speller=AZURE_SEARCH_QUERY_SPELLER,
-            prompt_manager=prompt_manager,
-        )
+    # Removed GPT4V and vision approach setup as part of Azure Search removal
+    current_app.logger.info("Skipping GPT4V setup as we're using pure chat approach")
 
     # Register our custom ChatApproach implementation for handling file uploads
     from approaches.chat import ChatApproach as AssistantChatApproach
@@ -1021,7 +979,6 @@ async def setup_clients():
 
 @bp.after_app_serving
 async def close_clients():
-    await current_app.config[CONFIG_SEARCH_CLIENT].close()
     await current_app.config[CONFIG_BLOB_CONTAINER_CLIENT].close()
     if current_app.config.get(CONFIG_USER_BLOB_CONTAINER_CLIENT):
         await current_app.config[CONFIG_USER_BLOB_CONTAINER_CLIENT].close()

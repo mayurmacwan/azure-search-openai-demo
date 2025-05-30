@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, RefObject } from "react";
-import { Outlet, NavLink, Link } from "react-router-dom";
+import { Outlet, Link } from "react-router-dom";
 import { useTranslation } from "react-i18next";
 import styles from "./Layout.module.css";
 
 import { useLogin } from "../../authConfig";
 import { LoginButton } from "../../components/LoginButton";
-import { IconButton } from "@fluentui/react";
-import { Chat24Regular, DocumentFolder24Regular, Settings24Regular, AddSquare24Regular } from "@fluentui/react-icons";
+import { Chat24Regular, Settings24Regular, AddSquare24Regular } from "@fluentui/react-icons";
+import { useChatContext } from "../../chatContext";
 
 const Layout = () => {
     const { t } = useTranslation();
     const [menuOpen, setMenuOpen] = useState(false);
     const menuRef: RefObject<HTMLDivElement> = useRef(null);
+    const { resetChat } = useChatContext();
 
     const handleClickOutside = (event: MouseEvent) => {
         if (menuRef.current && !menuRef.current.contains(event.target as Node)) {
@@ -50,7 +51,13 @@ const Layout = () => {
                         <div className={styles.sidebarTitle}>{t("headerTitle")}</div>
                     </div>
 
-                    <button className={styles.newChatButton}>
+                    <button 
+                        className={styles.newChatButton}
+                        onClick={() => {
+                            // Call the resetChat function from context
+                            resetChat();
+                        }}
+                    >
                         <AddSquare24Regular className={styles.newChatIcon} />
                         New Chat
                     </button>
@@ -64,10 +71,6 @@ const Layout = () => {
                     </ul>
 
                     <div className={styles.sidebarFooter}>
-                        <div className={styles.footerItem}>
-                            <DocumentFolder24Regular className={styles.footerItemIcon} />
-                            <span className={styles.footerItemText}>My Documents</span>
-                        </div>
                         <div className={styles.footerItem}>
                             <Settings24Regular className={styles.footerItemIcon} />
                             <span className={styles.footerItemText}>Settings</span>

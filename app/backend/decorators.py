@@ -4,7 +4,7 @@ from typing import Any, Callable, TypeVar, cast
 
 from quart import abort, current_app, request
 
-from config import CONFIG_AUTH_CLIENT, CONFIG_SEARCH_CLIENT
+from config import CONFIG_AUTH_CLIENT
 from core.authentication import AuthError
 from error import error_response
 
@@ -18,11 +18,10 @@ def authenticated_path(route_fn: Callable[[str, dict[str, Any]], Any]):
     async def auth_handler(path=""):
         # If authentication is enabled, validate the user can access the file
         auth_helper = current_app.config[CONFIG_AUTH_CLIENT]
-        search_client = current_app.config[CONFIG_SEARCH_CLIENT]
         authorized = False
         try:
             auth_claims = await auth_helper.get_auth_claims_if_enabled(request.headers)
-            authorized = await auth_helper.check_path_auth(path, auth_claims, search_client)
+            authorized = await auth_helper.check_path_auth(path, auth_claims)
         except AuthError:
             abort(403)
         except Exception as error:

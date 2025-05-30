@@ -17,30 +17,11 @@ export const enum VectorFields {
 }
 
 export type ChatAppRequestOverrides = {
-    retrieval_mode?: RetrievalMode;
-    semantic_ranker?: boolean;
-    semantic_captions?: boolean;
-    query_rewriting?: boolean;
-    reasoning_effort?: string;
-    include_category?: string;
-    exclude_category?: string;
-    seed?: number;
-    top?: number;
-    max_subqueries?: number;
     temperature?: number;
-    minimum_search_score?: number;
-    minimum_reranker_score?: number;
+    seed?: number;
     prompt_template?: string;
-    prompt_template_prefix?: string;
-    prompt_template_suffix?: string;
     suggest_followup_questions?: boolean;
-    use_oid_security_filter?: boolean;
-    use_groups_security_filter?: boolean;
-    use_gpt4v?: boolean;
-    gpt4v_input?: GPT4VInput;
-    vector_fields: VectorFields;
-    language: string;
-    use_agentic_retrieval: boolean;
+    language?: string;
 };
 
 export type ResponseMessage = {

@@ -36,7 +36,6 @@ class AuthenticationHelper:
 
     def __init__(
         self,
-        search_index: Optional[SearchIndex],
         use_authentication: bool,
         server_app_id: Optional[str],
         server_app_secret: Optional[str],
@@ -63,8 +62,6 @@ class AuthenticationHelper:
         self.key_url = f"{self.authority}/discovery/v2.0/keys"
 
         if self.use_authentication:
-            field_names = [field.name for field in search_index.fields] if search_index else []
-            self.has_auth_fields = "oids" in field_names and "groups" in field_names
             self.require_access_control = require_access_control
             self.enable_global_documents = enable_global_documents
             self.enable_unauthenticated_access = enable_unauthenticated_access

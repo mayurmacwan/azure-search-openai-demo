@@ -5,14 +5,13 @@ import { Panel, DefaultButton, Spinner } from "@fluentui/react";
 
 import styles from "./Ask.module.css";
 
-import { askApi, configApi, ChatAppResponse, ChatAppRequest, RetrievalMode, VectorFields, GPT4VInput, SpeechConfig } from "../../api";
+import { askApi, configApi, ChatAppResponse, ChatAppRequest, SpeechConfig } from "../../api";
 import { Answer, AnswerError } from "../../components/Answer";
 import { QuestionInput } from "../../components/QuestionInput";
 import { ExampleList } from "../../components/Example";
 import { AnalysisPanel, AnalysisPanelTabs } from "../../components/AnalysisPanel";
 import { SettingsButton } from "../../components/SettingsButton/SettingsButton";
 import { useLogin, getToken, requireAccessControl } from "../../authConfig";
-import { UploadFile } from "../../components/UploadFile";
 import { Settings } from "../../components/Settings/Settings";
 import { useMsal } from "@azure/msal-react";
 import { TokenClaimsDisplay } from "../../components/TokenClaimsDisplay";
@@ -22,41 +21,15 @@ import { LanguagePicker } from "../../i18n/LanguagePicker";
 export function Component(): JSX.Element {
     const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
     const [promptTemplate, setPromptTemplate] = useState<string>("");
-    const [promptTemplatePrefix, setPromptTemplatePrefix] = useState<string>("");
-    const [promptTemplateSuffix, setPromptTemplateSuffix] = useState<string>("");
     const [temperature, setTemperature] = useState<number>(0.3);
     const [seed, setSeed] = useState<number | null>(null);
-    const [minimumRerankerScore, setMinimumRerankerScore] = useState<number>(0);
-    const [minimumSearchScore, setMinimumSearchScore] = useState<number>(0);
-    const [retrievalMode, setRetrievalMode] = useState<RetrievalMode>(RetrievalMode.Hybrid);
-    const [retrieveCount, setRetrieveCount] = useState<number>(3);
-    const [maxSubqueryCount, setMaxSubqueryCount] = useState<number>(10);
-    const [useSemanticRanker, setUseSemanticRanker] = useState<boolean>(true);
-    const [useSemanticCaptions, setUseSemanticCaptions] = useState<boolean>(false);
-    const [useQueryRewriting, setUseQueryRewriting] = useState<boolean>(false);
-    const [reasoningEffort, setReasoningEffort] = useState<string>("");
-    const [useGPT4V, setUseGPT4V] = useState<boolean>(false);
-    const [gpt4vInput, setGPT4VInput] = useState<GPT4VInput>(GPT4VInput.TextAndImages);
-    const [includeCategory, setIncludeCategory] = useState<string>("");
-    const [excludeCategory, setExcludeCategory] = useState<string>("");
     const [question, setQuestion] = useState<string>("");
-    const [vectorFields, setVectorFields] = useState<VectorFields>(VectorFields.TextAndImageEmbeddings);
-    const [useOidSecurityFilter, setUseOidSecurityFilter] = useState<boolean>(false);
-    const [useGroupsSecurityFilter, setUseGroupsSecurityFilter] = useState<boolean>(false);
-    const [showGPT4VOptions, setShowGPT4VOptions] = useState<boolean>(false);
-    const [showSemanticRankerOption, setShowSemanticRankerOption] = useState<boolean>(false);
-    const [showQueryRewritingOption, setShowQueryRewritingOption] = useState<boolean>(false);
-    const [showReasoningEffortOption, setShowReasoningEffortOption] = useState<boolean>(false);
-    const [showVectorOption, setShowVectorOption] = useState<boolean>(false);
-    const [showUserUpload, setShowUserUpload] = useState<boolean>(false);
     const [showLanguagePicker, setshowLanguagePicker] = useState<boolean>(false);
     const [showSpeechInput, setShowSpeechInput] = useState<boolean>(false);
     const [showSpeechOutputBrowser, setShowSpeechOutputBrowser] = useState<boolean>(false);
     const [showSpeechOutputAzure, setShowSpeechOutputAzure] = useState<boolean>(false);
     const audio = useRef(new Audio()).current;
     const [isPlaying, setIsPlaying] = useState(false);
-    const [showAgenticRetrievalOption, setShowAgenticRetrievalOption] = useState<boolean>(false);
-    const [useAgenticRetrieval, setUseAgenticRetrieval] = useState<boolean>(false);
 
     const lastQuestionRef = useRef<string>("");
 
@@ -82,26 +55,10 @@ export function Component(): JSX.Element {
 
     const getConfig = async () => {
         configApi().then(config => {
-            setShowGPT4VOptions(config.showGPT4VOptions);
-            setUseSemanticRanker(config.showSemanticRankerOption);
-            setShowSemanticRankerOption(config.showSemanticRankerOption);
-            setUseQueryRewriting(config.showQueryRewritingOption);
-            setShowQueryRewritingOption(config.showQueryRewritingOption);
-            setShowReasoningEffortOption(config.showReasoningEffortOption);
-            if (config.showReasoningEffortOption) {
-                setReasoningEffort(config.defaultReasoningEffort);
-            }
-            setShowVectorOption(config.showVectorOption);
-            if (!config.showVectorOption) {
-                setRetrievalMode(RetrievalMode.Text);
-            }
-            setShowUserUpload(config.showUserUpload);
             setshowLanguagePicker(config.showLanguagePicker);
             setShowSpeechInput(config.showSpeechInput);
             setShowSpeechOutputBrowser(config.showSpeechOutputBrowser);
             setShowSpeechOutputAzure(config.showSpeechOutputAzure);
-            setShowAgenticRetrievalOption(config.showAgenticRetrievalOption);
-            setUseAgenticRetrieval(config.showAgenticRetrievalOption);
         });
     };
 
@@ -130,27 +87,8 @@ export function Component(): JSX.Element {
                 context: {
                     overrides: {
                         prompt_template: promptTemplate.length === 0 ? undefined : promptTemplate,
-                        prompt_template_prefix: promptTemplatePrefix.length === 0 ? undefined : promptTemplatePrefix,
-                        prompt_template_suffix: promptTemplateSuffix.length === 0 ? undefined : promptTemplateSuffix,
-                        include_category: includeCategory.length === 0 ? undefined : includeCategory,
-                        exclude_category: excludeCategory.length === 0 ? undefined : excludeCategory,
-                        top: retrieveCount,
-                        max_subqueries: maxSubqueryCount,
                         temperature: temperature,
-                        minimum_reranker_score: minimumRerankerScore,
-                        minimum_search_score: minimumSearchScore,
-                        retrieval_mode: retrievalMode,
-                        semantic_ranker: useSemanticRanker,
-                        semantic_captions: useSemanticCaptions,
-                        query_rewriting: useQueryRewriting,
-                        reasoning_effort: reasoningEffort,
-                        use_oid_security_filter: useOidSecurityFilter,
-                        use_groups_security_filter: useGroupsSecurityFilter,
-                        vector_fields: vectorFields,
-                        use_gpt4v: useGPT4V,
-                        gpt4v_input: gpt4vInput,
                         language: i18n.language,
-                        use_agentic_retrieval: useAgenticRetrieval,
                         ...(seed !== null ? { seed: seed } : {})
                     }
                 },
@@ -172,68 +110,12 @@ export function Component(): JSX.Element {
             case "promptTemplate":
                 setPromptTemplate(value);
                 break;
-            case "promptTemplatePrefix":
-                setPromptTemplatePrefix(value);
-                break;
-            case "promptTemplateSuffix":
-                setPromptTemplateSuffix(value);
-                break;
             case "temperature":
                 setTemperature(value);
                 break;
             case "seed":
                 setSeed(value);
                 break;
-            case "minimumRerankerScore":
-                setMinimumRerankerScore(value);
-                break;
-            case "minimumSearchScore":
-                setMinimumSearchScore(value);
-                break;
-            case "retrieveCount":
-                setRetrieveCount(value);
-                break;
-            case "maxSubqueryCount":
-                setMaxSubqueryCount(value);
-                break;
-            case "useSemanticRanker":
-                setUseSemanticRanker(value);
-                break;
-            case "useSemanticCaptions":
-                setUseSemanticCaptions(value);
-                break;
-            case "useQueryRewriting":
-                setUseQueryRewriting(value);
-                break;
-            case "reasoningEffort":
-                setReasoningEffort(value);
-                break;
-            case "excludeCategory":
-                setExcludeCategory(value);
-                break;
-            case "includeCategory":
-                setIncludeCategory(value);
-                break;
-            case "useOidSecurityFilter":
-                setUseOidSecurityFilter(value);
-                break;
-            case "useGroupsSecurityFilter":
-                setUseGroupsSecurityFilter(value);
-                break;
-            case "useGPT4V":
-                setUseGPT4V(value);
-                break;
-            case "gpt4vInput":
-                setGPT4VInput(value);
-                break;
-            case "vectorFields":
-                setVectorFields(value);
-                break;
-            case "retrievalMode":
-                setRetrievalMode(value);
-                break;
-            case "useAgenticRetrieval":
-                setUseAgenticRetrieval(value);
         }
     };
 
@@ -259,13 +141,7 @@ export function Component(): JSX.Element {
         }
     };
 
-    const onUseOidSecurityFilterChange = (_ev?: React.FormEvent<HTMLElement | HTMLInputElement>, checked?: boolean) => {
-        setUseOidSecurityFilter(!!checked);
-    };
-
-    const onUseGroupsSecurityFilterChange = (_ev?: React.FormEvent<HTMLElement | HTMLInputElement>, checked?: boolean) => {
-        setUseGroupsSecurityFilter(!!checked);
-    };
+    // Security filter functions removed as part of RAG cleanup
 
     const { t, i18n } = useTranslation();
 
@@ -277,7 +153,6 @@ export function Component(): JSX.Element {
             </Helmet>
             <div className={styles.askTopSection}>
                 <div className={styles.commandsContainer}>
-                    {showUserUpload && <UploadFile className={styles.commandButton} disabled={loggedIn} />}
                     <SettingsButton className={styles.commandButton} onClick={() => setIsConfigPanelOpen(!isConfigPanelOpen)} />
                 </div>
                 <h1 className={styles.askTitle}>{t("askTitle")}</h1>
@@ -296,7 +171,7 @@ export function Component(): JSX.Element {
                 {!lastQuestionRef.current && (
                     <div className={styles.askTopSection}>
                         {showLanguagePicker && <LanguagePicker onLanguageChange={newLang => i18n.changeLanguage(newLang)} />}
-                        <ExampleList onExampleClicked={onExampleClicked} useGPT4V={useGPT4V} />
+                        <ExampleList onExampleClicked={onExampleClicked} />
                     </div>
                 )}
                 {!isLoading && answer && !error && (
@@ -342,36 +217,8 @@ export function Component(): JSX.Element {
             >
                 <Settings
                     promptTemplate={promptTemplate}
-                    promptTemplatePrefix={promptTemplatePrefix}
-                    promptTemplateSuffix={promptTemplateSuffix}
                     temperature={temperature}
-                    retrieveCount={retrieveCount}
-                    maxSubqueryCount={maxSubqueryCount}
                     seed={seed}
-                    minimumSearchScore={minimumSearchScore}
-                    minimumRerankerScore={minimumRerankerScore}
-                    useSemanticRanker={useSemanticRanker}
-                    useSemanticCaptions={useSemanticCaptions}
-                    useQueryRewriting={useQueryRewriting}
-                    reasoningEffort={reasoningEffort}
-                    excludeCategory={excludeCategory}
-                    includeCategory={includeCategory}
-                    retrievalMode={retrievalMode}
-                    useGPT4V={useGPT4V}
-                    gpt4vInput={gpt4vInput}
-                    vectorFields={vectorFields}
-                    showSemanticRankerOption={showSemanticRankerOption}
-                    showQueryRewritingOption={showQueryRewritingOption}
-                    showReasoningEffortOption={showReasoningEffortOption}
-                    showGPT4VOptions={showGPT4VOptions}
-                    showVectorOption={showVectorOption}
-                    useOidSecurityFilter={useOidSecurityFilter}
-                    useGroupsSecurityFilter={useGroupsSecurityFilter}
-                    useLogin={!!useLogin}
-                    loggedIn={loggedIn}
-                    requireAccessControl={requireAccessControl}
-                    showAgenticRetrievalOption={showAgenticRetrievalOption}
-                    useAgenticRetrieval={useAgenticRetrieval}
                     onChange={handleSettingsChange}
                 />
                 {useLogin && <TokenClaimsDisplay />}

@@ -1,4 +1,4 @@
-import { useRef, useState, useEffect, useContext } from "react";
+import { useRef, useState, useEffect, useContext, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { Helmet } from "react-helmet-async";
 import { Panel, DefaultButton } from "@fluentui/react";
@@ -10,13 +10,10 @@ import styles from "./Chat.module.css";
 import {
     chatApi,
     configApi,
-    RetrievalMode,
     ChatAppResponse,
     ChatAppResponseOrError,
     ChatAppRequest,
     ResponseMessage,
-    VectorFields,
-    GPT4VInput,
     SpeechConfig
 } from "../../api";
 import { Answer, AnswerError, AnswerLoading } from "../../components/Answer";
@@ -29,39 +26,24 @@ import { HistoryProviderOptions, useHistoryManager } from "../../components/Hist
 import { HistoryButton } from "../../components/HistoryButton";
 import { SettingsButton } from "../../components/SettingsButton";
 import { ClearChatButton } from "../../components/ClearChatButton";
-import { UploadFile } from "../../components/UploadFile";
 import { useLogin, getToken, requireAccessControl } from "../../authConfig";
 import { useMsal } from "@azure/msal-react";
 import { TokenClaimsDisplay } from "../../components/TokenClaimsDisplay";
 import { LoginContext } from "../../loginContext";
 import { LanguagePicker } from "../../i18n/LanguagePicker";
 import { Settings } from "../../components/Settings/Settings";
+import { useChatContext } from "../../chatContext";
 
 const Chat = () => {
+    
     const [isConfigPanelOpen, setIsConfigPanelOpen] = useState(false);
     const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState(false);
     const [promptTemplate, setPromptTemplate] = useState<string>("");
-    const [temperature, setTemperature] = useState<number>(0.3);
+    const [temperature, setTemperature] = useState<number>(0.7);
     const [seed, setSeed] = useState<number | null>(null);
-    const [minimumRerankerScore, setMinimumRerankerScore] = useState<number>(0);
-    const [minimumSearchScore, setMinimumSearchScore] = useState<number>(0);
-    const [retrieveCount, setRetrieveCount] = useState<number>(3);
-    const [maxSubqueryCount, setMaxSubqueryCount] = useState<number>(10);
-    const [retrievalMode, setRetrievalMode] = useState<RetrievalMode>(RetrievalMode.Hybrid);
-    const [useSemanticRanker, setUseSemanticRanker] = useState<boolean>(true);
-    const [useQueryRewriting, setUseQueryRewriting] = useState<boolean>(false);
-    const [reasoningEffort, setReasoningEffort] = useState<string>("");
     const [streamingEnabled, setStreamingEnabled] = useState<boolean>(true);
     const [shouldStream, setShouldStream] = useState<boolean>(true);
-    const [useSemanticCaptions, setUseSemanticCaptions] = useState<boolean>(false);
-    const [includeCategory, setIncludeCategory] = useState<string>("");
-    const [excludeCategory, setExcludeCategory] = useState<string>("");
     const [useSuggestFollowupQuestions, setUseSuggestFollowupQuestions] = useState<boolean>(false);
-    const [vectorFields, setVectorFields] = useState<VectorFields>(VectorFields.TextAndImageEmbeddings);
-    const [useOidSecurityFilter, setUseOidSecurityFilter] = useState<boolean>(false);
-    const [useGroupsSecurityFilter, setUseGroupsSecurityFilter] = useState<boolean>(false);
-    const [gpt4vInput, setGPT4VInput] = useState<GPT4VInput>(GPT4VInput.TextAndImages);
-    const [useGPT4V, setUseGPT4V] = useState<boolean>(false);
 
     const lastQuestionRef = useRef<string>("");
     const chatMessageStreamEnd = useRef<HTMLDivElement | null>(null);
@@ -78,20 +60,12 @@ const Chat = () => {
     const [streamedAnswers, setStreamedAnswers] = useState<[user: string, response: ChatAppResponse][]>([]);
     const [speechUrls, setSpeechUrls] = useState<(string | null)[]>([]);
 
-    const [showGPT4VOptions, setShowGPT4VOptions] = useState<boolean>(false);
-    const [showSemanticRankerOption, setShowSemanticRankerOption] = useState<boolean>(false);
-    const [showQueryRewritingOption, setShowQueryRewritingOption] = useState<boolean>(false);
-    const [showReasoningEffortOption, setShowReasoningEffortOption] = useState<boolean>(false);
-    const [showVectorOption, setShowVectorOption] = useState<boolean>(false);
-    const [showUserUpload, setShowUserUpload] = useState<boolean>(false);
     const [showLanguagePicker, setshowLanguagePicker] = useState<boolean>(false);
     const [showSpeechInput, setShowSpeechInput] = useState<boolean>(false);
     const [showSpeechOutputBrowser, setShowSpeechOutputBrowser] = useState<boolean>(false);
     const [showSpeechOutputAzure, setShowSpeechOutputAzure] = useState<boolean>(false);
     const [showChatHistoryBrowser, setShowChatHistoryBrowser] = useState<boolean>(false);
     const [showChatHistoryCosmos, setShowChatHistoryCosmos] = useState<boolean>(false);
-    const [showAgenticRetrievalOption, setShowAgenticRetrievalOption] = useState<boolean>(false);
-    const [useAgenticRetrieval, setUseAgenticRetrieval] = useState<boolean>(false);
 
     const audio = useRef(new Audio()).current;
     const [isPlaying, setIsPlaying] = useState(false);
@@ -105,38 +79,57 @@ const Chat = () => {
     };
 
     const [isPanelOpen, setIsPanelOpen] = useState<boolean>(false);
+    
+    // Get the context for new chat functionality
+    const { setResetChatFunction } = useChatContext();
+    
+    // Define a clean clearChat function that resets all state using useCallback to maintain reference stability
+    const clearChat = useCallback(() => {
+        // Reset all state
+        lastQuestionRef.current = "";
+        setError(undefined);
+        setActiveCitation(undefined);
+        setActiveAnalysisPanelTab(undefined);
+        setAnswers([]);
+        setSpeechUrls([]);
+        setStreamedAnswers([]);
+        setIsLoading(false);
+        setIsStreaming(false);
+    }, []);
+    
+    // Register the clearChat function with the chat context only once
+    useEffect(() => {
+        setResetChatFunction(clearChat);
+        // No cleanup needed as the context will handle function replacement
+    }, [clearChat, setResetChatFunction]);
+    
+    // Add a keyboard shortcut for clearing chat (Ctrl+Alt+N)
+    useEffect(() => {
+        const handleKeyDown = (event: KeyboardEvent) => {
+            if (event.ctrlKey && event.altKey && event.key === 'n') {
+                clearChat();
+            }
+        };
+        
+        window.addEventListener('keydown', handleKeyDown);
+        
+        return () => {
+            window.removeEventListener('keydown', handleKeyDown);
+        };
+    }, []);
 
     const getConfig = async () => {
         configApi().then(config => {
-            setShowGPT4VOptions(config.showGPT4VOptions);
-            if (config.showGPT4VOptions) {
-                setUseGPT4V(true);
-            }
-            setUseSemanticRanker(config.showSemanticRankerOption);
-            setShowSemanticRankerOption(config.showSemanticRankerOption);
-            setUseQueryRewriting(config.showQueryRewritingOption);
-            setShowQueryRewritingOption(config.showQueryRewritingOption);
-            setShowReasoningEffortOption(config.showReasoningEffortOption);
             setStreamingEnabled(config.streamingEnabled);
             if (!config.streamingEnabled) {
                 setShouldStream(false);
             }
-            if (config.showReasoningEffortOption) {
-                setReasoningEffort(config.defaultReasoningEffort);
-            }
-            setShowVectorOption(config.showVectorOption);
-            if (!config.showVectorOption) {
-                setRetrievalMode(RetrievalMode.Text);
-            }
-            setShowUserUpload(config.showUserUpload);
             setshowLanguagePicker(config.showLanguagePicker);
             setShowSpeechInput(config.showSpeechInput);
             setShowSpeechOutputBrowser(config.showSpeechOutputBrowser);
             setShowSpeechOutputAzure(config.showSpeechOutputAzure);
             setShowChatHistoryBrowser(config.showChatHistoryBrowser);
             setShowChatHistoryCosmos(config.showChatHistoryCosmos);
-            setShowAgenticRetrievalOption(config.showAgenticRetrievalOption);
-            setUseAgenticRetrieval(config.showAgenticRetrievalOption);
         });
     };
 
@@ -204,40 +197,22 @@ const Chat = () => {
         const token = client ? await getToken(client) : undefined;
 
         try {
-            const messages: ResponseMessage[] = answers.flatMap(a => [
-                { content: a[0], role: "user" },
-                { content: a[1].message.content, role: "assistant" }
-            ]);
-
+            const userMessage = answers.length === 0 ? question : answers[answers.length - 1][0];
             const request: ChatAppRequest = {
-                messages: [...messages, { content: question, role: "user" }],
+                messages: [
+                    ...answers.map(a => ({ content: a[0], role: "user" })),
+                    ...answers.map(a => ({ content: a[1].message.content, role: a[1].message.role })),
+                    { content: question, role: "user" }
+                ],
                 context: {
                     overrides: {
                         prompt_template: promptTemplate.length === 0 ? undefined : promptTemplate,
-                        include_category: includeCategory.length === 0 ? undefined : includeCategory,
-                        exclude_category: excludeCategory.length === 0 ? undefined : excludeCategory,
-                        top: retrieveCount,
                         temperature: temperature,
-                        minimum_reranker_score: minimumRerankerScore,
-                        minimum_search_score: minimumSearchScore,
-                        retrieval_mode: retrievalMode,
-                        semantic_ranker: useSemanticRanker,
-                        semantic_captions: useSemanticCaptions,
-                        query_rewriting: useQueryRewriting,
-                        reasoning_effort: reasoningEffort,
-                        suggest_followup_questions: useSuggestFollowupQuestions,
-                        use_oid_security_filter: useOidSecurityFilter,
-                        use_groups_security_filter: useGroupsSecurityFilter,
-                        vector_fields: vectorFields,
-                        use_gpt4v: useGPT4V,
-                        gpt4v_input: gpt4vInput,
-                        language: i18n.language,
-                        use_agentic_retrieval: useAgenticRetrieval,
-                        ...(seed !== null ? { seed: seed } : {})
+                        ...(seed !== null ? { seed } : {}),
+                        suggest_followup_questions: useSuggestFollowupQuestions
                     }
                 },
-                // AI Chat Protocol: Client must pass on any session state received from the server
-                session_state: answers.length ? answers[answers.length - 1][1].session_state : null
+                session_state: userMessage === question ? (historyManager as any).getState?.() : undefined
             };
 
             const response = await chatApi(request, shouldStream, token);
@@ -273,22 +248,20 @@ const Chat = () => {
         }
     };
 
-    const clearChat = () => {
-        lastQuestionRef.current = "";
-        error && setError(undefined);
-        setActiveCitation(undefined);
-        setActiveAnalysisPanelTab(undefined);
-        setAnswers([]);
-        setSpeechUrls([]);
-        setStreamedAnswers([]);
-        setIsLoading(false);
-        setIsStreaming(false);
-    };
+    // clearChat function moved above to ensure it's defined before the useEffect
 
     useEffect(() => chatMessageStreamEnd.current?.scrollIntoView({ behavior: "smooth" }), [isLoading]);
     useEffect(() => chatMessageStreamEnd.current?.scrollIntoView({ behavior: "auto" }), [streamedAnswers]);
     useEffect(() => {
         getConfig();
+        
+        // Register the clearChat function with the context
+        setResetChatFunction(clearChat);
+        
+        // Cleanup when component unmounts
+        return () => {
+            setResetChatFunction(() => {});
+        };
     }, []);
 
     const handleSettingsChange = (field: string, value: any) => {
@@ -302,62 +275,12 @@ const Chat = () => {
             case "seed":
                 setSeed(value);
                 break;
-            case "minimumRerankerScore":
-                setMinimumRerankerScore(value);
-                break;
-            case "minimumSearchScore":
-                setMinimumSearchScore(value);
-                break;
-            case "retrieveCount":
-                setRetrieveCount(value);
-                break;
-            case "maxSubqueryCount":
-                setMaxSubqueryCount(value);
-                break;
-            case "useSemanticRanker":
-                setUseSemanticRanker(value);
-                break;
-            case "useQueryRewriting":
-                setUseQueryRewriting(value);
-                break;
-            case "reasoningEffort":
-                setReasoningEffort(value);
-                break;
-            case "useSemanticCaptions":
-                setUseSemanticCaptions(value);
-                break;
-            case "excludeCategory":
-                setExcludeCategory(value);
-                break;
-            case "includeCategory":
-                setIncludeCategory(value);
-                break;
-            case "useOidSecurityFilter":
-                setUseOidSecurityFilter(value);
-                break;
-            case "useGroupsSecurityFilter":
-                setUseGroupsSecurityFilter(value);
-                break;
             case "shouldStream":
                 setShouldStream(value);
                 break;
             case "useSuggestFollowupQuestions":
                 setUseSuggestFollowupQuestions(value);
                 break;
-            case "useGPT4V":
-                setUseGPT4V(value);
-                break;
-            case "gpt4vInput":
-                setGPT4VInput(value);
-                break;
-            case "vectorFields":
-                setVectorFields(value);
-                break;
-            case "retrievalMode":
-                setRetrievalMode(value);
-                break;
-            case "useAgenticRetrieval":
-                setUseAgenticRetrieval(value);
         }
     };
 
@@ -484,6 +407,7 @@ const Chat = () => {
                             onSend={question => makeApiRequest(question)}
                             showSpeechInput={showSpeechInput}
                         />
+
                     </div>
                 </div>
 
@@ -524,37 +448,11 @@ const Chat = () => {
                     <Settings
                         promptTemplate={promptTemplate}
                         temperature={temperature}
-                        retrieveCount={retrieveCount}
-                        maxSubqueryCount={maxSubqueryCount}
                         seed={seed}
-                        minimumSearchScore={minimumSearchScore}
-                        minimumRerankerScore={minimumRerankerScore}
-                        useSemanticRanker={useSemanticRanker}
-                        useSemanticCaptions={useSemanticCaptions}
-                        useQueryRewriting={useQueryRewriting}
-                        reasoningEffort={reasoningEffort}
-                        excludeCategory={excludeCategory}
-                        includeCategory={includeCategory}
-                        retrievalMode={retrievalMode}
-                        useGPT4V={useGPT4V}
-                        gpt4vInput={gpt4vInput}
-                        vectorFields={vectorFields}
-                        showSemanticRankerOption={showSemanticRankerOption}
-                        showQueryRewritingOption={showQueryRewritingOption}
-                        showReasoningEffortOption={showReasoningEffortOption}
-                        showGPT4VOptions={showGPT4VOptions}
-                        showVectorOption={showVectorOption}
-                        useOidSecurityFilter={useOidSecurityFilter}
-                        useGroupsSecurityFilter={useGroupsSecurityFilter}
-                        useLogin={!!useLogin}
-                        loggedIn={loggedIn}
-                        requireAccessControl={requireAccessControl}
                         shouldStream={shouldStream}
                         streamingEnabled={streamingEnabled}
                         useSuggestFollowupQuestions={useSuggestFollowupQuestions}
                         showSuggestFollowupQuestions={true}
-                        showAgenticRetrievalOption={showAgenticRetrievalOption}
-                        useAgenticRetrieval={useAgenticRetrieval}
                         onChange={handleSettingsChange}
                     />
                     {useLogin && <TokenClaimsDisplay />}

@@ -3,6 +3,7 @@ import { checkLoggedIn, msalConfig, useLogin } from "./authConfig";
 import { useEffect, useState } from "react";
 import { MsalProvider } from "@azure/msal-react";
 import { LoginContext } from "./loginContext";
+import { ChatProvider } from "./chatContext";
 import Layout from "./pages/layout/Layout";
 
 const LayoutWrapper = () => {
@@ -40,7 +41,9 @@ const LayoutWrapper = () => {
                         setLoggedIn
                     }}
                 >
-                    <Layout />
+                    <ChatProvider>
+                        <Layout />
+                    </ChatProvider>
                 </LoginContext.Provider>
             </MsalProvider>
         );
@@ -52,7 +55,9 @@ const LayoutWrapper = () => {
                     setLoggedIn
                 }}
             >
-                <Layout />
+                <ChatProvider>
+                    <Layout />
+                </ChatProvider>
             </LoginContext.Provider>
         );
     }
