@@ -95,13 +95,27 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
     if (!files || files.length === 0) return;
     
     const file = files[0];
-    if (file.type !== 'application/pdf') {
-      setUploadStatus('Only PDF files are supported');
+    const supportedTypes = [
+      'application/pdf',
+      'image/jpeg',
+      'image/png',
+      'image/bmp',
+      'image/tiff',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+      'application/msword',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+      'application/vnd.ms-powerpoint'
+    ];
+    
+    if (!supportedTypes.includes(file.type)) {
+      setUploadStatus('Unsupported file type. Please upload PDF, JPEG, PNG, TIFF, BMP, or Office documents (DOCX, DOC, XLSX, XLS, PPTX, PPT)');
       return;
     }
     
     setIsLoading(true);
-    setUploadStatus('Uploading and processing PDF...');
+    setUploadStatus('Uploading and processing document...');
     
     try {
       // Read the file as base64
@@ -113,13 +127,13 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
         const base64Data = e.target.result.split(',')[1];
         
         // Send the file to the backend
-        const response = await fetch('/api/upload_pdf', {
+        const response = await fetch('/api/upload_pdf', {  // Keep endpoint name for backward compatibility
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            pdf_base64: base64Data,
+            pdf_base64: base64Data,  // Keep parameter name for backward compatibility
             filename: file.name
           }),
         });
@@ -148,13 +162,13 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
         // Add document to citations
         setCitations(prev => [...prev, { type: 'document', title: file.name }]);
         
-        setUploadStatus('PDF uploaded successfully!');
+        setUploadStatus('Document uploaded successfully!');
       };
       
       reader.readAsDataURL(file);
     } catch (error) {
-      console.error('Failed to upload PDF:', error);
-      setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Could not upload the PDF.'}`);
+      console.error('Failed to upload document:', error);
+      setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Could not upload the document.'}`);
     } finally {
       setIsLoading(false);
       // Reset the file input
@@ -375,7 +389,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
           type="file"
           ref={fileInputRef}
           onChange={handleFileUpload}
-          accept=".pdf"
+          accept=".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.docx,.doc,.xlsx,.xls,.pptx,.ppt"
           style={{ display: 'none' }}
         />
       </form>

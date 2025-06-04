@@ -39,14 +39,24 @@ def format_document_context(document_content):
     logging.info(f"Document content type: {type(document_content)}")
     logging.info(f"Document content keys: {document_content.keys() if isinstance(document_content, dict) else 'Not a dict'}")
     
-    # The document content should be a dict with a 'content' key that contains a list of pages
-    if isinstance(document_content, dict) and "content" in document_content:
-        context = "Document content:\n\n"
-        for page in document_content["content"]:
-            context += f"Page {page['page_num']}:\n{page['text']}\n\n"
-        
-        logging.info(f"Formatted context length: {len(context)}")
-        return context
+    # The document content should be a dict with a 'content' key
+    if isinstance(document_content, dict):
+        if "content" in document_content:
+            # If content is a string (from Document Intelligence), use it directly
+            if isinstance(document_content["content"], str):
+                return f"Document content:\n\n{document_content['content']}"
+            # If content is a list (from old PDF format), format it page by page
+            elif isinstance(document_content["content"], list):
+                context = "Document content:\n\n"
+                for page in document_content["content"]:
+                    if isinstance(page, dict) and "page_num" in page and "text" in page:
+                        context += f"Page {page['page_num']}:\n{page['text']}\n\n"
+                    else:
+                        context += f"{str(page)}\n\n"
+                return context
+        else:
+            logging.error("Document content dict does not have 'content' key")
+            return ""
     else:
         logging.error(f"Unexpected document content structure: {document_content}")
         return ""

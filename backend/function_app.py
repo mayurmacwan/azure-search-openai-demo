@@ -12,12 +12,12 @@ import langchain.tools as lc_tools  # Import as module to avoid scope issues
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
-from utils.pdf_processor import PDFProcessor
+from utils.pdf_processor import DocumentProcessor
 from utils.document_store import DocumentStore
 from utils.chat_utils import create_llm, format_document_context
 
 app = func.FunctionApp()
-pdf_processor = PDFProcessor()
+document_processor = DocumentProcessor()
 document_store = DocumentStore()
 
 # CORS headers
@@ -59,25 +59,25 @@ def upload_pdf(req: func.HttpRequest) -> func.HttpResponse:
             status_code=400
         ))
     
-    pdf_base64 = req_body.get('pdf_base64')
+    doc_base64 = req_body.get('pdf_base64')  # Keep the parameter name for backward compatibility
     filename = req_body.get('filename')
     
-    if not pdf_base64 or not filename:
+    if not doc_base64 or not filename:
         return add_cors_headers(func.HttpResponse(
             "Please provide both 'pdf_base64' and 'filename' in the request body",
             status_code=400
         ))
     
     try:
-        # Decode the base64 PDF
-        pdf_bytes = base64.b64decode(pdf_base64)
+        # Decode the base64 document
+        doc_bytes = base64.b64decode(doc_base64)
         
-        # Process the PDF
-        result = pdf_processor.process_pdf(pdf_bytes, filename)
+        # Process the document
+        result = document_processor.process_document(doc_bytes, filename)
         
         if not result:
             return add_cors_headers(func.HttpResponse(
-                "Failed to process PDF. No text content extracted.",
+                "Failed to process document. No content extracted.",
                 status_code=400
             ))
         
@@ -94,10 +94,16 @@ def upload_pdf(req: func.HttpRequest) -> func.HttpResponse:
             mimetype="application/json"
         ))
         
-    except Exception as e:
-        logging.error(f"Error processing PDF: {e}")
+    except ValueError as ve:
+        logging.error(f"Validation error: {str(ve)}")
         return add_cors_headers(func.HttpResponse(
-            f"Error processing PDF: {str(e)}",
+            str(ve),
+            status_code=400
+        ))
+    except Exception as e:
+        logging.error(f"Error processing document: {e}")
+        return add_cors_headers(func.HttpResponse(
+            f"Error processing document: {str(e)}",
             status_code=500
         ))
 
@@ -245,7 +251,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
             logging.info(f"Attempting to retrieve document with ID: {doc_id}")
             
             # Get the document content
-            document_content = pdf_processor.get_document_content(doc_id)
+            document_content = document_processor.get_document_content(doc_id)
             
             if document_content:
                 logging.info(f"Document content retrieved. Length: {len(document_content)} chunks")

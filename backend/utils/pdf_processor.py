@@ -1,32 +1,74 @@
-import PyPDF2
 import logging
-import tempfile
 import uuid
 import os
-from typing import Dict, List, Any
+import mimetypes
+from typing import Dict, List, Any, Optional
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.documentintelligence.models import AnalyzeDocumentRequest, DocumentContentFormat, AnalyzeResult
+from azure.keyvault.secrets import SecretClient
+from azure.identity import DefaultAzureCredential
+from azure.core.credentials import AzureKeyCredential
 
-class PDFProcessor:
+class DocumentProcessor:
+    """Process documents using Azure Document Intelligence."""
+    
     def __init__(self):
         # In-memory storage for document content
         self.documents: Dict[str, Dict[str, Any]] = {}
+        self.doc_client = self.get_document_client()
     
-    def process_pdf(self, pdf_bytes, filename):
-        """Process a PDF file and extract its text content."""
+    def get_document_client(self):
+        """Get Azure Document Intelligence client using Key Vault credentials."""
         try:
-            # Create a temporary file to save the PDF
-            with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as temp_file:
-                temp_file.write(pdf_bytes)
-                temp_path = temp_file.name
+            # Check if we're running in Azure Functions
+            is_azure_functions = os.environ.get('FUNCTIONS_WORKER_RUNTIME') is not None
             
-            # Extract text from the PDF
-            pdf_text = self._extract_text_from_pdf(temp_path)
+            if is_azure_functions:
+                # In Azure Functions, use managed identity
+                credential = DefaultAzureCredential()
+            else:
+                # For local development, use Azure CLI
+                credential = DefaultAzureCredential(exclude_managed_identity_credential=True)
+                
+            keyvault_url = f"https://{os.environ['KEY_VAULT_NAME']}.vault.azure.net"
+            secret_client = SecretClient(vault_url=keyvault_url, credential=credential)
             
-            # Clean up the temporary file
-            os.unlink(temp_path)
+            endpoint = secret_client.get_secret("claims-pulse-di-endpoint").value
+            key = secret_client.get_secret("claims-pulse-di-key").value
             
-            if not pdf_text:
-                logging.warning(f"No text extracted from PDF: {filename}")
-                return None
+            return DocumentIntelligenceClient(endpoint=endpoint, credential=AzureKeyCredential(key))
+        except Exception as e:
+            logging.error(f"Error getting document client: {str(e)}")
+            raise
+
+    def is_supported_format(self, filename: str) -> bool:
+        """Check if the file format is supported."""
+        supported_extensions = {
+            '.pdf', '.jpeg', '.jpg', '.png', '.bmp', '.tiff', 
+            '.docx', '.doc', '.xlsx', '.xls', '.pptx', '.ppt'
+        }
+        ext = os.path.splitext(filename)[1].lower()
+        return ext in supported_extensions
+
+    def process_document(self, doc_bytes: bytes, filename: str) -> Optional[Dict[str, Any]]:
+        """Process a document using Azure Document Intelligence."""
+        try:
+            # Check if file format is supported
+            if not self.is_supported_format(filename):
+                raise ValueError(f"Unsupported file format: {filename}")
+            
+            # Log file details
+            file_size = len(doc_bytes)
+            logging.info(f"Processing file: {filename}, Size: {file_size} bytes")
+            
+            # Process the document using prebuilt-layout model
+            poller = self.doc_client.begin_analyze_document(
+                "prebuilt-layout",
+                AnalyzeDocumentRequest(bytes_source=doc_bytes),
+                output_content_format=DocumentContentFormat.MARKDOWN
+            )
+            
+            result: AnalyzeResult = poller.result()
             
             # Generate a unique ID for this document
             doc_id = str(uuid.uuid4())
@@ -34,39 +76,20 @@ class PDFProcessor:
             # Store the document content in memory
             self.documents[doc_id] = {
                 "filename": filename,
-                "content": pdf_text,
-                "pages": len(pdf_text)
+                "content": result.content,
+                "pages": len(result.pages) if hasattr(result, 'pages') else 1
             }
             
             return {
                 "doc_id": doc_id,
                 "filename": filename,
-                "num_chunks": len(pdf_text)
+                "num_chunks": len(result.pages) if hasattr(result, 'pages') else 1
             }
             
         except Exception as e:
-            logging.error(f"Error processing PDF: {e}")
+            logging.error(f"Error processing document {filename}: {str(e)}")
             raise
     
-    def _extract_text_from_pdf(self, pdf_path):
-        """Extract text from a PDF file, returning a list of pages."""
-        try:
-            pdf_pages = []
-            with open(pdf_path, 'rb') as file:
-                reader = PyPDF2.PdfReader(file)
-                for page_num in range(len(reader.pages)):
-                    page = reader.pages[page_num]
-                    text = page.extract_text()
-                    if text.strip():  # Only add non-empty pages
-                        pdf_pages.append({
-                            "page_num": page_num + 1,
-                            "text": text
-                        })
-            return pdf_pages
-        except Exception as e:
-            logging.error(f"Error extracting text from PDF: {e}")
-            return []
-    
-    def get_document_content(self, doc_id):
+    def get_document_content(self, doc_id: str) -> Optional[Dict[str, Any]]:
         """Get the content of a document by ID."""
         return self.documents.get(doc_id)
