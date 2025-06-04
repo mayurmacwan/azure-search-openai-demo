@@ -150,3 +150,7 @@ static/
 data/**/*.md5
 
 .DS_Store
+
+# Azure Functions
+local.settings.json
+backend/local.settings.json
