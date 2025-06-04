@@ -37,11 +37,11 @@ interface ThinkingLog {
 interface ChatProps {
   messages: Message[];
   setMessages: React.Dispatch<React.SetStateAction<Message[]>>;
-  activeDocument: string | null;
-  setActiveDocument: React.Dispatch<React.SetStateAction<string | null>>;
+  activeDocuments: string[];
+  setActiveDocuments: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
-const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setActiveDocument }) => {
+const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, setActiveDocuments }) => {
   const [input, setInput] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [documents, setDocuments] = useState<Document[]>([]);
@@ -49,7 +49,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
   const [thinkingLogs, setThinkingLogs] = useState<ThinkingLog[]>([]);
   const [isThinkingPaneOpen, setIsThinkingPaneOpen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'thinking' | 'citations'>('thinking');
-  const [citations, setCitations] = useState<Array<{ type: 'web' | 'document'; title: string; url?: string; }>>([]);
+  const [citations, setCitations] = useState<Array<{ type: 'web' | 'document'; title: string; url?: string; docId?: string; }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -103,46 +103,56 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
     const files = event.target.files;
     if (!files || files.length === 0) return;
     
-    const file = files[0];
-    const supportedTypes = [
-      'application/pdf',
-      'image/jpeg',
-      'image/png',
-      'image/bmp',
-      'image/tiff',
-      'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      'application/msword',
-      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      'application/vnd.ms-excel',
-      'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      'application/vnd.ms-powerpoint'
-    ];
-    
-    if (!supportedTypes.includes(file.type)) {
-      setUploadStatus('Unsupported file type. Please upload PDF, JPEG, PNG, TIFF, BMP, or Office documents (DOCX, DOC, XLSX, XLS, PPTX, PPT)');
-      return;
-    }
-    
     setIsLoading(true);
-    setUploadStatus('Uploading and processing document...');
+    setUploadStatus('Uploading and processing documents...');
     
-    try {
-      // Read the file as base64
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        if (!e.target || typeof e.target.result !== 'string') return;
-        
-        // Extract the base64 data (remove the data URL prefix)
-        const base64Data = e.target.result.split(',')[1];
+    const uploadedDocIds: string[] = [];
+    const uploadErrors: string[] = [];
+    
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i];
+      const supportedTypes = [
+        'application/pdf',
+        'image/jpeg',
+        'image/png',
+        'image/bmp',
+        'image/tiff',
+        'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'application/msword',
+        'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        'application/vnd.ms-excel',
+        'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+        'application/vnd.ms-powerpoint'
+      ];
+      
+      if (!supportedTypes.includes(file.type)) {
+        uploadErrors.push(`${file.name}: Unsupported file type`);
+        continue;
+      }
+      
+      try {
+        // Read the file as base64
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = (e) => {
+            if (!e.target || typeof e.target.result !== 'string') {
+              reject(new Error('Failed to read file'));
+              return;
+            }
+            resolve(e.target.result.split(',')[1]);
+          };
+          reader.onerror = () => reject(reader.error);
+          reader.readAsDataURL(file);
+        });
         
         // Send the file to the backend
-        const response = await fetch('/api/upload_pdf', {  // Keep endpoint name for backward compatibility
+        const response = await fetch('/api/upload_pdf', {
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            pdf_base64: base64Data,  // Keep parameter name for backward compatibility
+            pdf_base64: base64Data,
             filename: file.name
           }),
         });
@@ -153,37 +163,44 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
         }
         
         const data = await response.json();
+        uploadedDocIds.push(data.doc_id);
         
-        // Update documents list
-        await fetchDocuments();
-        
-        // Set the active document
-        setActiveDocument(data.doc_id);
-        
-        // Add a system message about the uploaded document
-        const systemMessage: Message = {
-          id: Date.now().toString() + '-system',
-          text: `Document "${file.name}" has been uploaded and processed. The AI will now use this document to answer your questions.`,
-          sender: 'ai',
-        };
-        setMessages(prevMessages => [...prevMessages, systemMessage]);
-        
-        // Add document to citations
-        setCitations(prev => [...prev, { type: 'document', title: file.name }]);
-        
-        setUploadStatus('Document uploaded successfully!');
-      };
-      
-      reader.readAsDataURL(file);
-    } catch (error) {
-      console.error('Failed to upload document:', error);
-      setUploadStatus(`Error: ${error instanceof Error ? error.message : 'Could not upload the document.'}`);
-    } finally {
-      setIsLoading(false);
-      // Reset the file input
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
+      } catch (error) {
+        console.error(`Failed to upload ${file.name}:`, error);
+        uploadErrors.push(`${file.name}: ${error instanceof Error ? error.message : 'Upload failed'}`);
       }
+    }
+    
+    // Update documents list
+    await fetchDocuments();
+    
+    // Update active documents
+    if (uploadedDocIds.length > 0) {
+      setActiveDocuments(prev => [...prev, ...uploadedDocIds]);
+      
+      // Add a system message about the uploaded documents
+      const systemMessage: Message = {
+        id: Date.now().toString() + '-system',
+        text: `${uploadedDocIds.length} document(s) have been uploaded and processed. The AI will now use these documents to answer your questions.${
+          uploadErrors.length > 0 ? `\n\nErrors:\n${uploadErrors.join('\n')}` : ''
+        }`,
+        sender: 'ai',
+      };
+      setMessages(prevMessages => [...prevMessages, systemMessage]);
+    }
+    
+    setUploadStatus(
+      uploadedDocIds.length > 0
+        ? `Successfully uploaded ${uploadedDocIds.length} document(s)${
+            uploadErrors.length > 0 ? ` with ${uploadErrors.length} error(s)` : ''
+          }`
+        : 'No documents were uploaded successfully'
+    );
+    
+    setIsLoading(false);
+    // Reset the file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
     }
   };
   
@@ -199,81 +216,89 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
     
     // Clear upload status when a new prompt is submitted
     setUploadStatus('');
-
+    
+    // Add user message to chat
     const userMessage: Message = {
-      id: Date.now().toString() + '-user',
-      text: input,
-      sender: 'user',
+      id: Date.now().toString(),
+      text: input.trim(),
+      sender: 'user'
     };
-    setMessages((prevMessages) => [...prevMessages, userMessage]);
+    setMessages(prevMessages => [...prevMessages, userMessage]);
     setInput('');
+    
     setIsLoading(true);
-
+    
     try {
-      // Get all previous messages to send as history
-      const historyToSend = [...messages];
-      
-      // Prepare request body with message and history
-      const requestBody: any = { 
-        message: input,
-        history: historyToSend
-      };
-      
-      // Add document ID if there's an active document
-      if (activeDocument) {
-        requestBody.doc_id = activeDocument;
-      }
-      
-      // Azure Functions usually serve under /api prefix by default
       const response = await fetch('/api/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify(requestBody),
+        body: JSON.stringify({
+          message: userMessage.text,
+          history: messages,
+          doc_ids: activeDocuments  // Changed from doc_id to doc_ids
+        }),
       });
-
+      
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error || `HTTP error! status: ${response.status}`);
+        throw new Error(`HTTP error! status: ${response.status}`);
       }
-
+      
       const data = await response.json();
       
-      // Store thinking logs if available - append to existing logs
-      if (data.thinking_logs && data.thinking_logs.length > 0) {
-        setThinkingLogs(prevLogs => [...prevLogs, ...data.thinking_logs]);
+      // Add AI response to chat
+      const aiMessage: Message = {
+        id: Date.now().toString(),
+        text: data.message,
+        sender: 'ai'
+      };
+      setMessages(prevMessages => [...prevMessages, aiMessage]);
+      
+      // Update thinking logs
+      if (data.thinking_logs) {
+        setThinkingLogs(data.thinking_logs);
+        setIsThinkingPaneOpen(true);
         
-        // Extract web citations from thinking logs
-        const newWebCitations = data.thinking_logs
-          .filter((log: any) => log.type === 'search_results' && Array.isArray(log.results))
-          .flatMap((log: any) => {
-            return log.results.map((result: any) => ({
-              type: 'web' as const,
-              title: result.title || 'Web Search Result',
-              url: result.link
-            }));
-          });
+        // Extract citations from thinking logs
+        const newCitations: Array<{ type: 'web' | 'document'; title: string; url?: string; docId?: string }> = [];
         
-        if (newWebCitations.length > 0) {
-          setCitations(prev => [...prev, ...newWebCitations]);
-        }
+        // Process thinking logs for citations
+        data.thinking_logs.forEach((log: any) => {
+          if (log.type === 'search_results' && log.results) {
+            log.results.forEach((result: any) => {
+              newCitations.push({
+                type: 'web',
+                title: result.title,
+                url: result.url
+              });
+            });
+          } else if (log.type === 'tool_invocation' && log.tool === 'DocumentContent') {
+            // Add document citation with docId
+            const docId = log.docId;
+            const doc = documents.find(d => d.doc_id === docId);
+            if (doc) {
+              newCitations.push({
+                type: 'document',
+                title: doc.filename,
+                docId: docId
+              });
+            }
+          }
+        });
+        
+        setCitations(newCitations);
       }
       
-      const aiMessage: Message = {
-        id: Date.now().toString() + '-ai',
-        text: data.message,
-        sender: 'ai',
-      };
-      setMessages((prevMessages) => [...prevMessages, aiMessage]);
     } catch (error) {
-      console.error('Failed to send message:', error);
+      console.error('Error:', error);
+      // Add error message to chat
       const errorMessage: Message = {
-        id: Date.now().toString() + '-error',
-        text: `Error: ${error instanceof Error ? error.message : 'Could not connect to the bot.'}`,
-        sender: 'ai', // Display error as an AI message for simplicity
+        id: Date.now().toString(),
+        text: 'I apologize, but I encountered an error while processing your request. Please try again.',
+        sender: 'ai'
       };
-      setMessages((prevMessages) => [...prevMessages, errorMessage]);
+      setMessages(prevMessages => [...prevMessages, errorMessage]);
     } finally {
       setIsLoading(false);
     }
@@ -336,11 +361,11 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
   return (
     <div className={`chat-container ${isThinkingPaneOpen ? 'with-thinking-pane' : ''}`}>
       <div className="chat-header">
-        {activeDocument && documents.length > 0 && (
-          <div className="active-document">
-            <span>Active document: </span>
+        {activeDocuments.length > 0 && documents.length > 0 && (
+          <div className="active-documents">
+            <span>Active documents: </span>
             <strong>
-              {documents.find(doc => doc.doc_id === activeDocument)?.filename || 'Unknown'}
+              {documents.filter(doc => activeDocuments.includes(doc.doc_id)).map(doc => doc.filename).join(', ')}
             </strong>
           </div>
         )}
@@ -454,6 +479,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
           onChange={handleFileUpload}
           accept=".pdf,.jpg,.jpeg,.png,.bmp,.tiff,.docx,.doc,.xlsx,.xls,.pptx,.ppt"
           style={{ display: 'none' }}
+          multiple
         />
       </form>
       <ThinkingPane 

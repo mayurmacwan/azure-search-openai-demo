@@ -7,11 +7,11 @@ function App() {
   const handleNewChat = () => {
     // Reset all chat state
     setMessages([]);
-    setActiveDocument(null);
+    setActiveDocuments([]);
   };
 
   const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'user' | 'ai' }>>([]);
-  const [activeDocument, setActiveDocument] = useState<string | null>(null);
+  const [activeDocuments, setActiveDocuments] = useState<string[]>([]);
 
   return (
     <div className="app-container">
@@ -41,8 +41,8 @@ function App() {
         <Chat 
           messages={messages}
           setMessages={setMessages}
-          activeDocument={activeDocument}
-          setActiveDocument={setActiveDocument}
+          activeDocuments={activeDocuments}
+          setActiveDocuments={setActiveDocuments}
         />
       </main>
     </div>

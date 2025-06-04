@@ -83,15 +83,26 @@ button:focus, button:focus-visible {
   width: 96%;
 }
 
-.active-document {
+.active-documents {
   font-size: 0.9em;
   color: #7d7d8c;
   margin-right: auto;
+  max-width: 70%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.active-document strong {
+.active-documents strong {
   color: #3579b8;
   margin-left: 5px;
+  display: inline-block;
+}
+
+.active-documents strong:not(:last-child)::after {
+  content: ", ";
+  margin-right: 5px;
+  color: #7d7d8c;
 }
 
 .new-chat-button {
@@ -744,4 +755,14 @@ button:focus, button:focus-visible {
 .icon-button svg {
   width: 20px;
   height: 20px;
+}
+
+/* Update file input to accept multiple files */
+input[type="file"] {
+  display: none;
+}
+
+/* Remove old active-document styles */
+.active-document {
+  display: none;
 }

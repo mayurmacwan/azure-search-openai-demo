@@ -150,7 +150,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
     
     user_message = req_body.get('message')
     chat_history = req_body.get('history', [])
-    doc_id = req_body.get('doc_id')
+    doc_ids = req_body.get('doc_ids', [])  # Changed from doc_id to doc_ids
     
     # Get current date at the start
     current_date = datetime.now().strftime("%d %B %Y")
@@ -209,25 +209,33 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         # Initialize the LLM
         llm = create_llm(callback_manager=callback_manager)
         
-        # Get current date at the start
-        current_date = datetime.now().strftime("%d %B %Y")
-        logging.info(f"Current date: {current_date}")
-        
         # Create the system message with current date
         base_system_message = f"""IMPORTANT: The current date is {current_date}. You MUST use this date when referring to today's date. DO NOT use any other date as today's date.
         You are a helpful AI assistant with the ability to search the web for current information."""
         
-        # Check if we have a document context
-        document_context = ""
-        if doc_id:
-            logging.info(f"Attempting to retrieve document with ID: {doc_id}")
-            document_content = document_processor.get_document_content(doc_id)
-            if document_content:
-                document_context = format_document_context(document_content)
-                base_system_message += f"""
-                Use the following document content to answer questions:
-                {document_context}
-                """
+        # Check if we have document contexts
+        document_contexts = []
+        if doc_ids:
+            for doc_id in doc_ids:
+                logging.info(f"Attempting to retrieve document with ID: {doc_id}")
+                document_content = document_processor.get_document_content(doc_id)
+                if document_content:
+                    formatted_context = format_document_context(document_content)
+                    if formatted_context:
+                        document_contexts.append({
+                            'doc_id': doc_id,
+                            'content': formatted_context
+                        })
+        
+        if document_contexts:
+            # Add all document contexts to the system message
+            base_system_message += "\nUse the following document contents to answer questions:\n"
+            for ctx in document_contexts:
+                doc_info = document_store.get_document(ctx['doc_id'])
+                filename = doc_info['filename'] if doc_info else 'Unknown Document'
+                base_system_message += f"\n[Document: {filename}]\n{ctx['content']}\n"
+                
+            base_system_message += "\nWhen using information from these documents, please specify which document you are referencing."
         
         # Add search instructions to system message
         base_system_message += """
@@ -249,7 +257,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         # Set up memory for the agent
         memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
         
-        # Convert existing chat history to the format expected by ConversationBufferMemory
+        # Convert existing chat history
         if chat_history:
             logging.info(f"Converting {len(chat_history)} messages from chat history")
             for msg in chat_history:
@@ -329,25 +337,22 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
             search_tool = None
             use_agent = False
         
-        # Always add search tool if available
-        if search_tool:
-            tools.append(search_tool)
-        
-        # Create a document tool if document context is available
-        if document_context:
-            # Instead of creating a nested function, use a simple lambda
+        # Create document tools for each document context
+        for ctx in document_contexts:
+            doc_info = document_store.get_document(ctx['doc_id'])
+            filename = doc_info['filename'] if doc_info else 'Unknown Document'
+            
             try:
-                # Create a tool that returns the document content
+                # Create a tool that returns this document's content
                 doc_tool = lc_tools.Tool(
-                    name="DocumentContent",
-                    description="Useful for getting information from the uploaded document. Use this when you need to answer questions about the document content.",
-                    func=lambda x: document_context  # Simple lambda that returns the document content
+                    name=f"Document_{ctx['doc_id']}",
+                    description=f"Useful for getting information from the document '{filename}'. Use this when you need to answer questions about this specific document's content.",
+                    func=lambda x, content=ctx['content']: content
                 )
                 tools.append(doc_tool)
-                logging.info("Added document tool to agent")
+                logging.info(f"Added document tool for {filename}")
             except Exception as e:
-                logging.error(f"Error creating document tool: {e}")
-                # Continue without the document tool if there's an error
+                logging.error(f"Error creating document tool for {filename}: {e}")
         
         # Use agent if we have any tools available
         if use_agent and tools:
@@ -372,25 +377,24 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
                     "input": user_message
                 })
                 
-                # Explicitly log intermediate steps
+                # Process intermediate steps and add document citations
                 if "intermediate_steps" in response:
                     logging.info(f"Agent used {len(response['intermediate_steps'])} intermediate steps")
-                    # Add intermediate steps to thinking logs
                     for i, step in enumerate(response["intermediate_steps"]):
                         action, observation = step
+                        tool_name = action.tool
                         thinking_logs.logs.append({
                             "type": "tool_invocation",
-                            "tool": action.tool,
+                            "tool": tool_name,
                             "tool_input": action.tool_input,
-                            "step": i
+                            "step": i,
+                            "docId": tool_name.split('_')[1] if tool_name.startswith('Document_') else None
                         })
                         thinking_logs.logs.append({
                             "type": "tool_result",
                             "observation": observation,
                             "step": i
                         })
-                else:
-                    logging.warning("No intermediate_steps in agent response")
                 
                 # Extract the response text
                 if isinstance(response, dict) and "output" in response:
