@@ -9,3 +9,4 @@ openai>=1.6.1
 PyPDF2==3.0.1
 langchain-openai==0.3.19
 requests==2.32.3
+python-docx==1.0.1

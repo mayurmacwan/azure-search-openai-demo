@@ -15,6 +15,7 @@ from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from utils.pdf_processor import DocumentProcessor
 from utils.document_store import DocumentStore
 from utils.chat_utils import create_llm, format_document_context
+from utils.document_utils import create_chat_document
 
 app = func.FunctionApp()
 document_processor = DocumentProcessor()
@@ -495,5 +496,47 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         return add_cors_headers(func.HttpResponse(
              f"Error processing chat: {str(e)}",
              status_code=500
+        ))
+
+@app.route(route="download_chat", methods=["POST", "OPTIONS"])
+def download_chat(req: func.HttpRequest) -> func.HttpResponse:
+    # Handle CORS preflight
+    cors_response = handle_cors_preflight(req)
+    if cors_response:
+        return cors_response
+
+    try:
+        req_body = req.get_json()
+    except ValueError:
+        logging.error("Invalid JSON received")
+        return add_cors_headers(func.HttpResponse(
+            "Please pass a valid JSON object in the request body",
+            status_code=400
+        ))
+    
+    messages = req_body.get('messages')
+    if not messages:
+        return add_cors_headers(func.HttpResponse(
+            "Please provide 'messages' in the request body",
+            status_code=400
+        ))
+    
+    try:
+        # Generate Word document
+        doc_base64 = create_chat_document(messages)
+        
+        return add_cors_headers(func.HttpResponse(
+            json.dumps({
+                "success": True,
+                "document": doc_base64
+            }),
+            mimetype="application/json"
+        ))
+        
+    except Exception as e:
+        logging.error(f"Error generating document: {e}")
+        return add_cors_headers(func.HttpResponse(
+            f"Error generating document: {str(e)}",
+            status_code=500
         ))
 

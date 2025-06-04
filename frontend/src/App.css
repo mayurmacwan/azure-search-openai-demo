@@ -406,7 +406,7 @@ button:focus, button:focus-visible {
   gap: 8px;
 }
 
-.chat-input-form button {
+.action-button {
   background: linear-gradient(135deg,#7376e1,#5a5dd6)!important;
   transition: all .2s ease;
   box-shadow: 0 3px 8px #7376e180!important;
@@ -420,12 +420,22 @@ button:focus, button:focus-visible {
   border: none!important;
   margin: 0 3px!important;
   animation: subtle-pulse 2s infinite!important;
+  cursor: pointer;
 }
 
-.chat-input-form button:hover {
+.action-button:hover {
   background: linear-gradient(135deg, #8a8de8, #6d70e0) !important;
   box-shadow: 0 4px 8px #7376e180 !important;
   transform: translateY(-2px) !important;
+}
+
+.action-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: linear-gradient(135deg, #a8a8a8, #888888) !important;
+  box-shadow: none !important;
+  transform: none !important;
+  animation: none !important;
 }
 
 .chat-input-form button:disabled {
@@ -688,4 +698,49 @@ button:focus, button:focus-visible {
   .thinking-pane {
     width: 100%;
   }
+}
+
+.chat-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1rem;
+  border-bottom: 1px solid #e0e0e0;
+  background-color: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.chat-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-left: auto;
+}
+
+.icon-button {
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: 0.5rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s ease;
+  color: #7376e1;
+}
+
+.icon-button:hover {
+  background-color: rgba(115, 118, 225, 0.1);
+}
+
+.icon-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.icon-button svg {
+  width: 20px;
+  height: 20px;
 }

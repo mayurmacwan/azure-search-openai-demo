@@ -1,7 +1,15 @@
 import React, { useState, useRef } from 'react';
 import type { FormEvent, ChangeEvent } from 'react';
 import ThinkingPane from './ThinkingPane';
-import { ClipboardBulletList20Regular, DocumentCopy20Regular, Lightbulb20Regular, Attach28Regular, Send28Filled, Checkmark20Regular } from '@fluentui/react-icons';
+import { 
+  ClipboardBulletList20Regular, 
+  DocumentCopy20Regular, 
+  Lightbulb20Regular, 
+  Attach28Regular, 
+  Send28Filled, 
+  Checkmark20Regular,
+  ArrowDownload20Regular 
+} from '@fluentui/react-icons';
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import rehypeRaw from "rehype-raw";
@@ -44,6 +52,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
   const [citations, setCitations] = useState<Array<{ type: 'web' | 'document'; title: string; url?: string; }>>([]);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   const handleCopy = (textToCopy: string) => {
     navigator.clipboard
@@ -277,17 +286,56 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
     }
   };
 
+  const handleDownload = async () => {
+    if (messages.length === 0) return;
+    
+    setIsDownloading(true);
+    try {
+      const response = await fetch('/api/download_chat', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          messages: messages
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+
+      const data = await response.json();
+      
+      // Convert base64 to blob
+      const byteCharacters = atob(data.document);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' });
+
+      // Create download link
+      const downloadUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = downloadUrl;
+      link.download = `chat_conversation_${new Date().toISOString().split('T')[0]}.docx`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      window.URL.revokeObjectURL(downloadUrl);
+    } catch (error) {
+      console.error('Failed to download chat:', error);
+      // You might want to show an error message to the user here
+    } finally {
+      setIsDownloading(false);
+    }
+  };
+
   return (
     <div className={`chat-container ${isThinkingPaneOpen ? 'with-thinking-pane' : ''}`}>
-      <div>
-        {activeDocument && documents.length > 0 && (
-          <div className="active-document">
-            <span>Active document: </span>
-            <strong>
-              {documents.find(doc => doc.doc_id === activeDocument)?.filename || 'Unknown'}
-            </strong>
-          </div>
-        )}
+      <div className="chat-header">
         {activeDocument && documents.length > 0 && (
           <div className="active-document">
             <span>Active document: </span>
@@ -368,11 +416,25 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
             rows={1}
           />
           <div className="chat-buttons">
+            {messages.length > 0 && (
+              <Tooltip text={isDownloading ? "Downloading..." : "Download conversation"}>
+                <button 
+                  type="button"
+                  onClick={handleDownload}
+                  disabled={isDownloading}
+                  className="action-button"
+                  aria-label="Download conversation"
+                >
+                  <ArrowDownload20Regular primaryFill="white" />
+                </button>
+              </Tooltip>
+            )}
             <Tooltip text="Upload document to AI Assistant">
               <button 
                 type="button" 
                 onClick={handlePaperclipClick}
                 disabled={isLoading}
+                className="action-button"
               >
                 <Attach28Regular primaryFill="white" />
               </button>
@@ -380,6 +442,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocument, setA
             <button 
               type="submit" 
               disabled={isLoading || !input.trim()}
+              className="action-button"
             >
               <Send28Filled primaryFill="white" />
             </button>
