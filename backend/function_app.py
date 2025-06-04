@@ -3,14 +3,16 @@ import logging
 import json
 import os
 import base64
+from datetime import datetime
 
 from langchain.callbacks.base import BaseCallbackHandler
 from langchain.callbacks.manager import CallbackManager
-from langchain.agents import initialize_agent, AgentType
+from langchain.agents import initialize_agent, AgentType, AgentExecutor, create_openai_functions_agent
 from langchain_community.utilities.bing_search import BingSearchAPIWrapper
 import langchain.tools as lc_tools  # Import as module to avoid scope issues
 from langchain.memory import ConversationBufferMemory
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
+from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
 
 from utils.pdf_processor import DocumentProcessor
 from utils.document_store import DocumentStore
@@ -150,6 +152,10 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
     chat_history = req_body.get('history', [])
     doc_id = req_body.get('doc_id')
     
+    # Get current date at the start
+    current_date = datetime.now().strftime("%d %B %Y")
+    logging.info(f"Current date: {current_date}")
+    
     # Check if we should use an agent with tools
     use_agent = True  # We'll use an agent by default to enable search capabilities
 
@@ -203,6 +209,64 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         # Initialize the LLM
         llm = create_llm(callback_manager=callback_manager)
         
+        # Get current date at the start
+        current_date = datetime.now().strftime("%d %B %Y")
+        logging.info(f"Current date: {current_date}")
+        
+        # Create the system message with current date
+        base_system_message = f"""IMPORTANT: The current date is {current_date}. You MUST use this date when referring to today's date. DO NOT use any other date as today's date.
+        You are a helpful AI assistant with the ability to search the web for current information."""
+        
+        # Check if we have a document context
+        document_context = ""
+        if doc_id:
+            logging.info(f"Attempting to retrieve document with ID: {doc_id}")
+            document_content = document_processor.get_document_content(doc_id)
+            if document_content:
+                document_context = format_document_context(document_content)
+                base_system_message += f"""
+                Use the following document content to answer questions:
+                {document_context}
+                """
+        
+        # Add search instructions to system message
+        base_system_message += """
+        When asked about current events, news, or anything time-sensitive, you should use the BingSearch tool to find up-to-date information.
+        The search tool will automatically include today's date to ensure results are current.
+        If you don't know the answer to a question, you can use the BingSearch tool to look it up.
+        """
+        
+        logging.info(f"System message being used: {base_system_message}")
+        
+        # Create a prompt for the agent
+        prompt = ChatPromptTemplate.from_messages([
+            ("system", base_system_message),
+            MessagesPlaceholder(variable_name="chat_history"),
+            ("human", "{input}"),
+            MessagesPlaceholder(variable_name="agent_scratchpad")
+        ])
+
+        # Set up memory for the agent
+        memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
+        
+        # Convert existing chat history to the format expected by ConversationBufferMemory
+        if chat_history:
+            logging.info(f"Converting {len(chat_history)} messages from chat history")
+            for msg in chat_history:
+                if 'sender' in msg and 'text' in msg:
+                    if msg['sender'] == 'ai':
+                        memory.chat_memory.add_ai_message(msg['text'])
+                    else:  # user message
+                        memory.chat_memory.add_user_message(msg['text'])
+                elif 'role' in msg and 'content' in msg:
+                    if msg['role'] == 'assistant':
+                        memory.chat_memory.add_ai_message(msg['content'])
+                    elif msg['role'] == 'user':
+                        memory.chat_memory.add_user_message(msg['content'])
+        
+        # Create a list of tools for the agent
+        tools = []
+        
         # Set up Bing Search as a tool
         try:
             # Initialize Bing Search
@@ -215,6 +279,25 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
             
             # Create a search tool with a wrapper to handle both AI text and citations
             def search_with_results(query: str) -> tuple[str, list]:
+                # Check if the query is about current events or news
+                query_lower = query.lower()
+                
+                # Remove any dates from the query that might be from the AI's default knowledge
+                import re
+                # Pattern to match common date formats
+                date_pattern = r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b'
+                query = re.sub(date_pattern, '', query, flags=re.IGNORECASE)
+                
+                # If query is about current date or time
+                if any(term in query_lower for term in ['today', 'current date', 'what date', 'what day']):
+                    return f"Today's date is {current_date}.", []
+                
+                # If query is about current events or news
+                if any(term in query_lower for term in ['current', 'latest', 'news', 'now', 'today']):
+                    # Append the current date to the query
+                    query = f"{query.strip()} {current_date}"
+                    logging.info(f"Modified search query with date: {query}")
+
                 results = search.results(query, num_results=4)
                 # Format results as plain text for AI
                 formatted_results = []
@@ -246,56 +329,6 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
             search_tool = None
             use_agent = False
         
-        # Check if we have a document context
-        document_context = ""
-        if doc_id:
-            logging.info(f"Attempting to retrieve document with ID: {doc_id}")
-            
-            # Get the document content
-            document_content = document_processor.get_document_content(doc_id)
-            
-            if document_content:
-                logging.info(f"Document content retrieved. Length: {len(document_content)} chunks")
-                # Log the first few chunks safely
-                if isinstance(document_content, dict) and "content" in document_content:
-                    for i, chunk in enumerate(document_content["content"][:2]):
-                        logging.info(f"Sample chunk {i}: {str(chunk)[:100]}...")
-                else:
-                    logging.info(f"Document content type: {type(document_content)}")
-                    if isinstance(document_content, list) and len(document_content) > 0:
-                        logging.info(f"First item type: {type(document_content[0])}")
-                        logging.info(f"Sample: {str(document_content[0])[:100]}...")
-                
-                # Format document content as context
-                document_context = format_document_context(document_content)
-                logging.info(f"Document context formatted. Length: {len(document_context)} characters")
-                logging.info(f"Sample context: {document_context[:200]}...")
-            else:
-                logging.error(f"Document {doc_id} content not found or empty")
-                
-                # Check if document exists in document store
-                doc_info = document_store.get_document(doc_id)
-                if doc_info:
-                    logging.info(f"Document exists in document store: {doc_info}")
-                else:
-                    logging.error(f"Document {doc_id} not found in document store")
-        
-        # Determine the appropriate system message based on context
-        if document_context:
-            # If we have document context
-            system_message = f"""You are an AI assistant that helps with questions about documents. 
-            Use the following document content to answer the user's question. 
-            If the answer is not in the document, you can search the web using the BingSearch tool.
-            
-            {document_context}
-            """
-        else:
-            # If no document context, use a simple chat completion with search capability
-            system_message = "You are a helpful AI assistant with the ability to search the web for current information. If you don't know the answer to a question, you can use the BingSearch tool to look it up."
-            
-        # Create a list of tools for the agent
-        tools = []
-        
         # Always add search tool if available
         if search_tool:
             tools.append(search_tool)
@@ -320,58 +353,21 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         if use_agent and tools:
             logging.info(f"Using agent with {len(tools)} tools")
             
-            # Create a simpler agent with the tools
-            # Use the structured OPENAI_FUNCTIONS agent type
-            from langchain.agents import AgentExecutor, create_openai_functions_agent
-            from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
-            
-            # Create a system message that instructs the agent on how to use the tools
-            system_message = "You are a helpful AI assistant. "
-            if document_context:
-                system_message += "A document has been uploaded. Use the DocumentContent tool to access its contents when answering questions about the document. "
-            if search_tool:
-                system_message += "You can search the web using the BingSearch tool when you need current information. "
-            
-            # Create a prompt for the agent
-            prompt = ChatPromptTemplate.from_messages([
-                ("system", system_message),
-                MessagesPlaceholder(variable_name="chat_history"),
-                ("human", "{input}"),
-                MessagesPlaceholder(variable_name="agent_scratchpad")
-            ])
-            
-            # Set up memory for the agent
-            memory = ConversationBufferMemory(memory_key="chat_history", return_messages=True)
-            
-            # Convert existing chat history to the format expected by ConversationBufferMemory
-            if chat_history:
-                logging.info(f"Converting {len(chat_history)} messages from chat history")
-                for msg in chat_history:
-                    if 'sender' in msg and 'text' in msg:
-                        if msg['sender'] == 'ai':
-                            memory.chat_memory.add_ai_message(msg['text'])
-                        else:  # user message
-                            memory.chat_memory.add_user_message(msg['text'])
-                    elif 'role' in msg and 'content' in msg:
-                        if msg['role'] == 'assistant':
-                            memory.chat_memory.add_ai_message(msg['content'])
-                        elif msg['role'] == 'user':
-                            memory.chat_memory.add_user_message(msg['content'])
-            
             # Create the agent
             agent = create_openai_functions_agent(llm, tools, prompt)
+            
+            # Create the executor
             agent_executor = AgentExecutor(
-                agent=agent, 
-                tools=tools, 
-                verbose=True, 
+                agent=agent,
+                tools=tools,
+                verbose=True,
                 handle_parsing_errors=True,
-                return_intermediate_steps=True,  # Make sure to return intermediate steps
-                memory=memory  # Add memory to the agent executor
+                return_intermediate_steps=True,
+                memory=memory
             )
             
             # Run the agent with the user message
             try:
-                # Use the agent_executor instead of the agent directly
                 response = agent_executor.invoke({
                     "input": user_message
                 })
@@ -410,7 +406,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
                 
                 # Fall back to regular chat completion
                 messages = [
-                    {"role": "system", "content": system_message},
+                    {"role": "system", "content": base_system_message},
                     {"role": "user", "content": user_message}
                 ]
                 response = llm.invoke(messages)
@@ -419,16 +415,9 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
             # No tools available, use direct LLM completion
             logging.info("Using direct LLM completion (no tools available)")
             
-            # Create a system message that includes document context if available
-            if document_context:
-                system_message = f"You are a helpful AI assistant. You have access to the following document content:\n\n{document_context}\n\nPlease use this information to answer the user's questions."
-            else:
-                system_message = "You are a helpful AI assistant."
-
-            
             # Convert chat history to the format expected by the LLM
             messages = [
-                {"role": "system", "content": system_message}
+                {"role": "system", "content": base_system_message}
             ]
             
             # Add chat history - convert from frontend format to LLM format

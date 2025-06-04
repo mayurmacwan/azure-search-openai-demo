@@ -395,6 +395,7 @@ button:focus, button:focus-visible {
   background: transparent !important;
   overflow-y: auto;
   display: block;
+  color: #000 !important;
 }
 
 .chat-buttons {
