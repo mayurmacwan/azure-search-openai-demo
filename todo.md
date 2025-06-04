@@ -1,21 +1,13 @@
-1. Look at what functionality is or isn't there
-  - No my documents - removed
-  - No settings - left for now
-  - No new chat - fixed
-  - RAG - removed
-  - Upload not working - fixed now
-  - No web search tool
-  - No model choice
-  - Thought process
-  - Supporting content
-  - Citations
-  - No history
-2. Look into search with openai / azure openai
-  - web_search_tool not available in azure
-  - can try v1 api
-3. Add / test search functionality
-4. Fix up thought process
-5. Fix up citations
-6. Fix up supporting content
-7. Add reasoning models option
-8. Add history, conversation name
+1. Fix double submission of documents in thoughts pane
+2. Add other doc types with ADI
+3. Add download functionality
+4. Settings
+  - model
+  - temperature
+  - ?
+5. Add reasoning models
+  - deploy
+  - option
+  - thoughts
+6. Streaming would be nice
+7. Add history, conversation name (although require users)

@@ -1,0 +1,7 @@
+azure-functions==1.23.0
+langchain==0.3.25
+openai==1.82.1
+PyPDF2==3.0.1
+langchain-openai==0.3.19
+langchain-community==0.3.24
+requests==2.32.3
