@@ -210,8 +210,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         llm = create_llm(callback_manager=callback_manager)
         
         # Create the system message with current date
-        base_system_message = f"""IMPORTANT: The current date is {current_date}. You MUST use this date when referring to today's date. DO NOT use any other date as today's date.
-        You are a helpful AI assistant with the ability to search the web for current information."""
+        base_system_message = f"""IMPORTANT: The current date is {current_date}. You MUST use this date when referring to today's date. DO NOT use any other date as today's date. You are a helpful AI assistant with the ability to search the web for current information. When asked about current events, news, or anything time-sensitive, you should use the BingSearch tool to find up-to-date information."""
         
         # Check if we have document contexts
         document_contexts = []
@@ -329,8 +328,12 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
                 func=search_wrapper
             )
             
+            # Add search tool to the tools list
+            tools.append(search_tool)
+            
             # Log that we've set up the search tool
             thinking_logs.logs.append({"type": "tool_setup", "tool": "BingSearch"})
+            logging.info("Successfully added BingSearch tool")
             
         except Exception as e:
             logging.error(f"Error setting up Bing Search: {e}")
