@@ -55,7 +55,6 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [isMobileThinkingPaneOpen, setIsMobileThinkingPaneOpen] = useState(false);
 
   const handleCopy = (textToCopy: string) => {
     navigator.clipboard
@@ -309,16 +308,12 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
   };
 
   const toggleThinkingPane = (tab: 'thinking' | 'citations') => {
-    if (window.innerWidth <= 768) {
-      setIsMobileThinkingPaneOpen(true);
-    }
     setIsThinkingPaneOpen(true);
     setActiveTab(tab);
   };
 
   const handleCloseThinkingPane = () => {
     setIsThinkingPaneOpen(false);
-    setIsMobileThinkingPaneOpen(false);
   };
 
   const handleDownload = async () => {

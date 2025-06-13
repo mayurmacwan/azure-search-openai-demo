@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import './App.css';
 import Chat from './Chat';
-import { Chat24Regular, Settings24Regular, AddSquare24Regular, MoreHorizontal20Regular } from "@fluentui/react-icons";
+import { Settings24Regular, AddSquare24Regular, MoreHorizontal20Regular } from "@fluentui/react-icons";
 
 function App() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
