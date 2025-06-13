@@ -151,10 +151,12 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
     user_message = req_body.get('message')
     chat_history = req_body.get('history', [])
     doc_ids = req_body.get('doc_ids', [])  # Changed from doc_id to doc_ids
+    use_web_search = req_body.get('use_web_search', False)  # Get web search flag
     
     # Get current date at the start
     current_date = datetime.now().strftime("%d %B %Y")
     logging.info(f"Current date: {current_date}")
+    logging.info(f"Web search enabled: {use_web_search}")
     
     # Check if we should use an agent with tools
     use_agent = True  # We'll use an agent by default to enable search capabilities
@@ -210,7 +212,11 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         llm = create_llm(callback_manager=callback_manager)
         
         # Create the system message with current date
-        base_system_message = f"""IMPORTANT: The current date is {current_date}. You MUST use this date when referring to today's date. DO NOT use any other date as today's date. You are a helpful AI assistant with the ability to search the web for current information. When asked about current events, news, or anything time-sensitive, you should use the BingSearch tool to find up-to-date information."""
+        base_system_message = f"""IMPORTANT: The current date is {current_date}. You MUST use this date when referring to today's date. DO NOT use any other date as today's date. You are a helpful AI assistant."""
+        
+        # Add web search capability to system message only if enabled
+        if use_web_search:
+            base_system_message += " You have the ability to search the web for current information. When asked about current events, news, or anything time-sensitive, you should use the BingSearch tool to find up-to-date information."
         
         # Check if we have document contexts
         document_contexts = []
@@ -236,12 +242,13 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
                 
             base_system_message += "\nWhen using information from these documents, please specify which document you are referencing."
         
-        # Add search instructions to system message
-        base_system_message += """
-        When asked about current events, news, or anything time-sensitive, you should use the BingSearch tool to find up-to-date information.
-        The search tool will automatically include today's date to ensure results are current.
-        If you don't know the answer to a question, you can use the BingSearch tool to look it up.
-        """
+        # Add search instructions to system message only if web search is enabled
+        if use_web_search:
+            base_system_message += """
+            When asked about current events, news, or anything time-sensitive, you should use the BingSearch tool to find up-to-date information.
+            The search tool will automatically include today's date to ensure results are current.
+            If you don't know the answer to a question, you can use the BingSearch tool to look it up.
+            """
         
         logging.info(f"System message being used: {base_system_message}")
         
@@ -274,71 +281,74 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
         # Create a list of tools for the agent
         tools = []
         
-        # Set up Bing Search as a tool
-        try:
-            # Initialize Bing Search
-            search = BingSearchAPIWrapper(
-                k=4,
-                bing_subscription_key=os.getenv("BING_SUBSCRIPTION_KEY"),
-                bing_search_url=os.getenv("BING_SEARCH_URL"),
-                search_kwargs = {'mkt': 'en-GB', 'setLang': 'en-GB'}
-            )
-            
-            # Create a search tool with a wrapper to handle both AI text and citations
-            def search_with_results(query: str) -> tuple[str, list]:
-                # Check if the query is about current events or news
-                query_lower = query.lower()
+        # Set up Bing Search as a tool only if web search is enabled
+        if use_web_search:
+            try:
+                # Initialize Bing Search
+                search = BingSearchAPIWrapper(
+                    k=4,
+                    bing_subscription_key=os.getenv("BING_SUBSCRIPTION_KEY"),
+                    bing_search_url=os.getenv("BING_SEARCH_URL"),
+                    search_kwargs = {'mkt': 'en-GB', 'setLang': 'en-GB'}
+                )
                 
-                # Remove any dates from the query that might be from the AI's default knowledge
-                import re
-                # Pattern to match common date formats
-                date_pattern = r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b'
-                query = re.sub(date_pattern, '', query, flags=re.IGNORECASE)
+                # Create a search tool with a wrapper to handle both AI text and citations
+                def search_with_results(query: str) -> tuple[str, list]:
+                    # Check if the query is about current events or news
+                    query_lower = query.lower()
+                    
+                    # Remove any dates from the query that might be from the AI's default knowledge
+                    import re
+                    # Pattern to match common date formats
+                    date_pattern = r'\b\d{1,2}\s+(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{4}\b|\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}\b|\b\d{4}-\d{2}-\d{2}\b'
+                    query = re.sub(date_pattern, '', query, flags=re.IGNORECASE)
+                    
+                    # If query is about current date or time
+                    if any(term in query_lower for term in ['today', 'current date', 'what date', 'what day']):
+                        return f"Today's date is {current_date}.", []
+                    
+                    # If query is about current events or news
+                    if any(term in query_lower for term in ['current', 'latest', 'news', 'now', 'today']):
+                        # Append the current date to the query
+                        query = f"{query.strip()} {current_date}"
+                        logging.info(f"Modified search query with date: {query}")
+
+                    results = search.results(query, num_results=4)
+                    # Format results as plain text for AI
+                    formatted_results = []
+                    for result in results:
+                        formatted_results.append(f"Title: {result['title']}\nSummary: {result['snippet']}\n")
+                    return '\n\n'.join(formatted_results), results
+
+                # Wrapper to handle the tuple return and log the full results
+                def search_wrapper(query: str) -> str:
+                    text_result, full_results = search_with_results(query)
+                    # Log the full results for citation purposes
+                    thinking_logs.logs.append({
+                        "type": "search_results",
+                        "results": full_results
+                    })
+                    return text_result
+
+                search_tool = lc_tools.Tool(
+                    name="BingSearch",
+                    description="Useful for searching the web for current information. Use this when you need to find information about recent events or when you need to answer questions about current facts.",
+                    func=search_wrapper
+                )
                 
-                # If query is about current date or time
-                if any(term in query_lower for term in ['today', 'current date', 'what date', 'what day']):
-                    return f"Today's date is {current_date}.", []
+                # Add search tool to the tools list
+                tools.append(search_tool)
                 
-                # If query is about current events or news
-                if any(term in query_lower for term in ['current', 'latest', 'news', 'now', 'today']):
-                    # Append the current date to the query
-                    query = f"{query.strip()} {current_date}"
-                    logging.info(f"Modified search query with date: {query}")
-
-                results = search.results(query, num_results=4)
-                # Format results as plain text for AI
-                formatted_results = []
-                for result in results:
-                    formatted_results.append(f"Title: {result['title']}\nSummary: {result['snippet']}\n")
-                return '\n\n'.join(formatted_results), results
-
-            # Wrapper to handle the tuple return and log the full results
-            def search_wrapper(query: str) -> str:
-                text_result, full_results = search_with_results(query)
-                # Log the full results for citation purposes
-                thinking_logs.logs.append({
-                    "type": "search_results",
-                    "results": full_results
-                })
-                return text_result
-
-            search_tool = lc_tools.Tool(
-                name="BingSearch",
-                description="Useful for searching the web for current information. Use this when you need to find information about recent events or when you need to answer questions about current facts.",
-                func=search_wrapper
-            )
-            
-            # Add search tool to the tools list
-            tools.append(search_tool)
-            
-            # Log that we've set up the search tool
-            thinking_logs.logs.append({"type": "tool_setup", "tool": "BingSearch"})
-            logging.info("Successfully added BingSearch tool")
-            
-        except Exception as e:
-            logging.error(f"Error setting up Bing Search: {e}")
-            search_tool = None
-            use_agent = False
+                # Log that we've set up the search tool
+                thinking_logs.logs.append({"type": "tool_setup", "tool": "BingSearch"})
+                logging.info("Successfully added BingSearch tool")
+                
+            except Exception as e:
+                logging.error(f"Error setting up Bing Search: {e}")
+                search_tool = None
+                use_agent = False
+        else:
+            logging.info("Web search is disabled - not adding BingSearch tool")
         
         # Create document tools for each document context
         for ctx in document_contexts:

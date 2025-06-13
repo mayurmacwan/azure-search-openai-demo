@@ -488,6 +488,34 @@ button:focus, button:focus-visible {
   color: #000;
 }
 
+/* Web Search Warning */
+.web-search-warning {
+  background-color: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 8px;
+  padding: 12px 16px;
+  margin: 0 1.5rem 1rem;
+  text-align: center;
+  color: #856404;
+  font-size: 0.9rem;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.web-search-warning strong {
+  font-weight: 600;
+}
+
+/* Web Search Button Active State */
+.action-button.web-search-active {
+  background: linear-gradient(135deg, #ff6b6b, #ee5a52) !important;
+  box-shadow: 0 3px 8px #ff6b6b80 !important;
+}
+
+.action-button.web-search-active:hover {
+  background: linear-gradient(135deg, #ff8787, #ff6b6b) !important;
+  box-shadow: 0 4px 8px #ff6b6b80 !important;
+}
+
 /* Thinking pane styles */
 .chat-container {
   position: relative;

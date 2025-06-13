@@ -8,7 +8,8 @@ import {
   Attach28Regular, 
   Send28Filled, 
   Checkmark20Regular,
-  ArrowDownload20Regular 
+  ArrowDownload20Regular,
+  Search24Regular
 } from '@fluentui/react-icons';
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -50,6 +51,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
   const [isThinkingPaneOpen, setIsThinkingPaneOpen] = useState<boolean>(false);
   const [activeTab, setActiveTab] = useState<'thinking' | 'citations'>('thinking');
   const [citations, setCitations] = useState<Array<{ type: 'web' | 'document'; title: string; url?: string; docId?: string; }>>([]);
+  const [isWebSearchEnabled, setIsWebSearchEnabled] = useState<boolean>(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
@@ -237,7 +239,8 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
         body: JSON.stringify({
           message: userMessage.text,
           history: messages,
-          doc_ids: activeDocuments  // Changed from doc_id to doc_ids
+          doc_ids: activeDocuments,  // Changed from doc_id to doc_ids
+          use_web_search: isWebSearchEnabled  // Add web search flag
         }),
       });
       
@@ -423,6 +426,14 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
         {isLoading && <AnswerLoading />}
         {uploadStatus && <div className="upload-status">{uploadStatus}</div>}
       </div>
+      
+      {/* Web Search Warning */}
+      {isWebSearchEnabled && (
+        <div className="web-search-warning">
+          <strong>⚠️ Warning - Do not enter or upload any confidential data when using web search.</strong>
+        </div>
+      )}
+      
       <form onSubmit={handleSubmit} className="chat-input-form">
         <div className="input-container">
           <textarea
@@ -454,6 +465,17 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
                 </button>
               </Tooltip>
             )}
+            <Tooltip text={isWebSearchEnabled ? "Disable web search" : "Enable web search"}>
+              <button 
+                type="button" 
+                onClick={() => setIsWebSearchEnabled(!isWebSearchEnabled)}
+                disabled={isLoading}
+                className={`action-button ${isWebSearchEnabled ? 'web-search-active' : ''}`}
+                aria-label={isWebSearchEnabled ? "Disable web search" : "Enable web search"}
+              >
+                <Search24Regular primaryFill="white" />
+              </button>
+            </Tooltip>
             <Tooltip text="Upload document to AI Assistant">
               <button 
                 type="button" 
