@@ -1,21 +1,33 @@
 import { useState } from 'react';
 import './App.css';
 import Chat from './Chat';
-import { Chat24Regular, Settings24Regular, AddSquare24Regular } from "@fluentui/react-icons";
+import { Chat24Regular, Settings24Regular, AddSquare24Regular, MoreHorizontal20Regular } from "@fluentui/react-icons";
 
 function App() {
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'user' | 'ai' }>>([]);
+  const [activeDocuments, setActiveDocuments] = useState<string[]>([]);
+
   const handleNewChat = () => {
     // Reset all chat state
     setMessages([]);
     setActiveDocuments([]);
+    // Close sidebar on mobile after new chat
+    if (window.innerWidth <= 768) {
+      setIsSidebarOpen(false);
+    }
   };
 
-  const [messages, setMessages] = useState<Array<{ id: string; text: string; sender: 'user' | 'ai' }>>([]);
-  const [activeDocuments, setActiveDocuments] = useState<string[]>([]);
+  const toggleSidebar = () => {
+    setIsSidebarOpen(!isSidebarOpen);
+  };
 
   return (
     <div className="app-container">
-      <aside className="sidebar">
+      <button className="mobile-menu-button" onClick={toggleSidebar}>
+        <MoreHorizontal20Regular />
+      </button>
+      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="sidebar-logo">QR</div>
           <h1>Qualrisk AI</h1>

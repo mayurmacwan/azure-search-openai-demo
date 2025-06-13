@@ -207,7 +207,7 @@ const ThinkingPane: React.FC<ThinkingPaneProps> = ({ isOpen, onClose, logs, cita
   allCardsToDisplay.push(...interactionCards);
 
   return (
-    <div className="thinking-pane">
+    <div className={`thinking-pane ${isOpen ? 'open' : ''}`}>
       <div className="thinking-pane-header">
         <div className="tab-buttons">
           <button
@@ -223,7 +223,7 @@ const ThinkingPane: React.FC<ThinkingPaneProps> = ({ isOpen, onClose, logs, cita
             Citations
           </button>
         </div>
-        <button onClick={onClose} className="close-button">×</button>
+        <button onClick={onClose} className="close-button" aria-label="Close thinking pane">×</button>
       </div>
       <div className="thinking-pane-content">
         {activeTab === 'thinking' ? (

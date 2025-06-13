@@ -55,6 +55,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [copied, setCopied] = useState(false);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [isMobileThinkingPaneOpen, setIsMobileThinkingPaneOpen] = useState(false);
 
   const handleCopy = (textToCopy: string) => {
     navigator.clipboard
@@ -307,11 +308,17 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
     }
   };
 
-  const toggleThinkingPane = (tab?: 'thinking' | 'citations') => {
-    setIsThinkingPaneOpen(!isThinkingPaneOpen);
-    if (tab) {
-      setActiveTab(tab);
+  const toggleThinkingPane = (tab: 'thinking' | 'citations') => {
+    if (window.innerWidth <= 768) {
+      setIsMobileThinkingPaneOpen(true);
     }
+    setIsThinkingPaneOpen(true);
+    setActiveTab(tab);
+  };
+
+  const handleCloseThinkingPane = () => {
+    setIsThinkingPaneOpen(false);
+    setIsMobileThinkingPaneOpen(false);
   };
 
   const handleDownload = async () => {
@@ -400,22 +407,22 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
                     ) : (
                       <Tooltip text="Copy to clipboard">
                         <DocumentCopy20Regular
-                        className={'message-toolbar-button'}
-                        onClick={() => handleCopy(msg.text)}
-                      />
+                          className={'message-toolbar-button'}
+                          onClick={() => handleCopy(msg.text)}
+                        />
                       </Tooltip>
                     )}
                     <Tooltip text="Show thought process"> 
                       <Lightbulb20Regular
                         className={'message-toolbar-button'}
                         onClick={() => toggleThinkingPane('thinking')}
-                    />
+                      />
                     </Tooltip>
                     <Tooltip text="Show citations">
-                    <ClipboardBulletList20Regular
-                      className={'message-toolbar-button'}
-                      onClick={() => toggleThinkingPane('citations')}
-                    />
+                      <ClipboardBulletList20Regular
+                        className={'message-toolbar-button'}
+                        onClick={() => toggleThinkingPane('citations')}
+                      />
                     </Tooltip>
                   </div> 
                 ) : null}
@@ -506,7 +513,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
       </form>
       <ThinkingPane 
         isOpen={isThinkingPaneOpen} 
-        onClose={() => setIsThinkingPaneOpen(false)} 
+        onClose={handleCloseThinkingPane}
         logs={thinkingLogs}
         citations={citations}
         activeTab={activeTab}
