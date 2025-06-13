@@ -28,7 +28,7 @@ def add_cors_headers(response):
     """Add CORS headers to the response."""
     response.headers["Access-Control-Allow-Origin"] = "*"
     response.headers["Access-Control-Allow-Methods"] = "POST, OPTIONS, GET"
-    response.headers["Access-Control-Allow-Headers"] = "Content-Type"
+    response.headers["Access-Control-Allow-Headers"] = "Content-Type, x-functions-key"
     return response
 
 # Handle CORS preflight requests
@@ -41,12 +41,12 @@ def handle_cors_preflight(req):
             headers={
                 "Access-Control-Allow-Origin": "*",
                 "Access-Control-Allow-Methods": "POST, OPTIONS, GET",
-                "Access-Control-Allow-Headers": "Content-Type",
+                "Access-Control-Allow-Headers": "Content-Type, x-functions-key",
             }
         )
     return None
 
-@app.route(route="upload_pdf", methods=["POST", "OPTIONS"])
+@app.route(route="upload_pdf", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.FUNCTION)
 def upload_pdf(req: func.HttpRequest) -> func.HttpResponse:
     # Handle CORS preflight
     cors_response = handle_cors_preflight(req)
@@ -110,7 +110,7 @@ def upload_pdf(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         ))
 
-@app.route(route="list_documents", methods=["GET", "OPTIONS"])
+@app.route(route="list_documents", methods=["GET", "OPTIONS"], auth_level=func.AuthLevel.FUNCTION)
 def list_documents(req: func.HttpRequest) -> func.HttpResponse:
     # Handle CORS preflight
     cors_response = handle_cors_preflight(req)
@@ -130,7 +130,7 @@ def list_documents(req: func.HttpRequest) -> func.HttpResponse:
             status_code=500
         ))
 
-@app.route(route="chat", methods=["POST", "OPTIONS"])
+@app.route(route="chat", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.FUNCTION)
 def chat(req: func.HttpRequest) -> func.HttpResponse:
     # Handle CORS preflight
     cors_response = handle_cors_preflight(req)
@@ -504,7 +504,7 @@ def chat(req: func.HttpRequest) -> func.HttpResponse:
              status_code=500
         ))
 
-@app.route(route="download_chat", methods=["POST", "OPTIONS"])
+@app.route(route="download_chat", methods=["POST", "OPTIONS"], auth_level=func.AuthLevel.FUNCTION)
 def download_chat(req: func.HttpRequest) -> func.HttpResponse:
     # Handle CORS preflight
     cors_response = handle_cors_preflight(req)

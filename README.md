@@ -70,7 +70,7 @@ cd qrchat
     ```
 2.  **Create and activate a Python virtual environment:**
     ```bash
-    python -m venv .venv
+    python3.11 -m venv .venv
     ```
     *   On Windows:
         ```bash
@@ -101,7 +101,18 @@ cd qrchat
     ```bash
     npm install
     ```
-3.  **Run the Vite development server:**
+3.  **Configure Environment Variables (Optional for local development):**
+    For local development, the frontend will use the proxy configuration to connect to your local Azure Functions. However, if you want to connect directly to deployed Azure Functions, create a `.env.local` file in the frontend directory:
+    ```bash
+    # .env.local
+    VITE_API_BASE_URL=https://your-function-app-name.azurewebsites.net/api
+    VITE_FUNCTION_KEY=your-function-key-here
+    VITE_ENVIRONMENT=production
+    ```
+    
+    **Note:** For production deployment, these environment variables should be configured in Azure Static Web Apps configuration, not in local files.
+
+4.  **Run the Vite development server:**
     ```bash
     npm run dev
     ```
@@ -115,6 +126,27 @@ Once both the backend and frontend are running:
 2.  Navigate to the address provided by the Vite development server (e.g., `http://localhost:5173`).
 
 You should see the chat interface and be able to interact with the chatbot.
+
+## Production Deployment
+
+### Azure Functions Authentication
+
+The Azure Functions are configured with function-level authentication (`auth_level=func.AuthLevel.FUNCTION`). This means they require a function key to access them in production.
+
+### Frontend Environment Variables (Azure Static Web Apps)
+
+For production deployment, configure these environment variables in Azure Static Web Apps:
+
+- `VITE_API_BASE_URL`: The base URL of your Azure Functions (e.g., `https://internal-gpt-fn-v2.azurewebsites.net/api`)
+- `VITE_FUNCTION_KEY`: The function key from your Azure Functions App Keys section
+- `VITE_ENVIRONMENT`: Set to `production`
+
+### How to Get the Function Key
+
+1. Go to your Azure Functions in the Azure Portal
+2. Navigate to Functions → App keys
+3. Copy the default function key or create a new one
+4. Use this key in the `VITE_FUNCTION_KEY` environment variable
 
 ## Troubleshooting
 
