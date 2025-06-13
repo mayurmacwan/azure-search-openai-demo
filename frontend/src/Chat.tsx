@@ -87,7 +87,7 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
     }
   };
   
-  // Fetch documents when component mountss
+  // Fetch documents when component mountsss
   React.useEffect(() => {
     fetchDocuments();
   }, []);
