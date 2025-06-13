@@ -42,6 +42,33 @@ interface ChatProps {
   setActiveDocuments: React.Dispatch<React.SetStateAction<string[]>>;
 }
 
+// API Configuration utility
+const getApiConfig = () => {
+  const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || '/api';
+  const functionKey = import.meta.env.VITE_FUNCTION_KEY;
+  
+  const createApiUrl = (endpoint: string) => {
+    if (apiBaseUrl.startsWith('http')) {
+      return `${apiBaseUrl}/${endpoint}`;
+    }
+    return `${apiBaseUrl}/${endpoint}`;
+  };
+
+  const createHeaders = () => {
+    const headers: Record<string, string> = {
+      'Content-Type': 'application/json',
+    };
+    
+    if (functionKey) {
+      headers['x-functions-key'] = functionKey;
+    }
+    
+    return headers;
+  };
+
+  return { createApiUrl, createHeaders };
+};
+
 const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, setActiveDocuments }) => {
   const [input, setInput] = useState<string>('');
   const [isLoading, setIsLoading] = useState<boolean>(false);
@@ -69,11 +96,10 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
   
   const fetchDocuments = async () => {
     try {
-      const response = await fetch('/api/list_documents', {
+      const { createApiUrl, createHeaders } = getApiConfig();
+      const response = await fetch(createApiUrl('list_documents'), {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: createHeaders(),
       });
       
       if (!response.ok) {
@@ -148,11 +174,10 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
         });
         
         // Send the file to the backend
-        const response = await fetch('/api/upload_pdf', {
+        const { createApiUrl, createHeaders } = getApiConfig();
+        const response = await fetch(createApiUrl('upload_pdf'), {
           method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
+          headers: createHeaders(),
           body: JSON.stringify({
             pdf_base64: base64Data,
             filename: file.name
@@ -231,11 +256,10 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
     setIsLoading(true);
     
     try {
-      const response = await fetch('/api/chat', {
+      const { createApiUrl, createHeaders } = getApiConfig();
+      const response = await fetch(createApiUrl('chat'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: createHeaders(),
         body: JSON.stringify({
           message: userMessage.text,
           history: messages,
@@ -321,11 +345,10 @@ const Chat: React.FC<ChatProps> = ({ messages, setMessages, activeDocuments, set
     
     setIsDownloading(true);
     try {
-      const response = await fetch('/api/download_chat', {
+      const { createApiUrl, createHeaders } = getApiConfig();
+      const response = await fetch(createApiUrl('download_chat'), {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers: createHeaders(),
         body: JSON.stringify({
           messages: messages
         }),
